@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "crates/protocol",
+  "services/qa-api",
+  "src-tauri",
+]
+resolver = "2"
+

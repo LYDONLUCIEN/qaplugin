@@ -1,0 +1,43 @@
+services:
+  qa-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - ../.env.cloud
+    environment:
+      QA_BIND_ADDR: 0.0.0.0:8080
+      QA_WEB_DIR: /app/web
+      QA_DB_PATH: /app/data/qa-snapshot.db
+    expose:
+      - "8080"
+    volumes:
+      - qa_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      QA_DOMAIN: ${QA_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      qa-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  qa_data:
+  caddy_data:
+  caddy_config:

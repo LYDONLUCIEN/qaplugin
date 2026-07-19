@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.desktop.example
+!.env.cloud.example
+node_modules
+dist
+target
+src-tauri/target
+src-tauri/gen
+apps/cloud-web/node_modules
+apps/cloud-web/dist
+*.log
+.DS_Store
+data

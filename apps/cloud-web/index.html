@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>QA Snapshot Cloud</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">QA SNAPSHOT CLOUD</p>
+          <h1>截图会话</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="connection" class="pill offline">未登录</span>
+          <div id="account-actions" class="account-actions" hidden>
+            <strong id="current-user"></strong>
+            <button id="admin-toggle" class="compact secondary" hidden>用户管理</button>
+            <button id="logout" class="compact">退出</button>
+          </div>
+        </div>
+      </header>
+
+      <section id="login-card" class="card login-card">
+        <div class="login-intro">
+          <span class="caption">ACCOUNT</span>
+          <h2>登录 QA Snapshot</h2>
+          <p class="hint">登录后可以查看你名下设备的截图、历史会话和 AI 回复。</p>
+        </div>
+        <label>
+          用户名
+          <input id="username" autocomplete="username" placeholder="admin" />
+        </label>
+        <label>
+          密码
+          <input id="password" type="password" autocomplete="current-password" />
+        </label>
+        <button id="login" class="primary">登录</button>
+        <p id="login-status" class="status"></p>
+      </section>
+
+      <div id="app-shell" hidden>
+        <section class="card device-card">
+          <label>
+            当前设备
+            <select id="device-id"></select>
+          </label>
+          <button id="connect">连接设备</button>
+          <p id="device-state" class="hint">登录后只能访问分配给你的设备；管理员可以访问全部设备。</p>
+        </section>
+
+        <section id="admin-panel" class="card admin-panel" hidden>
+          <div class="admin-heading">
+            <div>
+              <span class="caption">ADMIN</span>
+              <h2>用户与设备管理</h2>
+            </div>
+            <button id="admin-close" class="compact secondary">收起</button>
+          </div>
+
+          <div class="admin-create">
+            <label>
+              新用户名
+              <input id="new-username" autocomplete="off" placeholder="例如 alice" />
+            </label>
+            <label>
+              初始密码
+              <input id="new-password" type="password" autocomplete="new-password" placeholder="至少 12 个字符" />
+            </label>
+            <button id="create-user">创建用户</button>
+          </div>
+
+          <div class="admin-columns">
+            <div>
+              <h3>账户与密码</h3>
+              <div id="admin-users" class="admin-list"></div>
+            </div>
+            <div>
+              <h3>设备归属</h3>
+              <div id="admin-devices" class="admin-list"></div>
+            </div>
+          </div>
+          <p id="admin-status" class="status"></p>
+        </section>
+
+        <div class="workspace">
+          <aside class="card sidebar">
+            <div class="sidebar-heading">
+              <div>
+                <span class="caption">SESSION</span>
+                <h2>历史会话</h2>
+              </div>
+              <button id="new-session" class="compact" disabled>＋ 新建</button>
+            </div>
+            <div id="session-list" class="session-list">
+              <p class="empty-copy">连接设备后加载历史</p>
+            </div>
+          </aside>
+
+          <section class="conversation">
+            <section class="card composer-card">
+              <div class="session-title-row">
+                <label class="title-field">
+                  会话名称
+                  <input id="session-title" placeholder="新会话" disabled />
+                </label>
+                <button id="save-session" class="secondary" disabled>保存设置</button>
+              </div>
+              <label>
+                本会话提示词
+                <textarea id="prompt" rows="5" disabled></textarea>
+              </label>
+              <p class="hint">提示词保存在当前设备的 Session 中；同一账户的手机和电脑浏览器共享记录。</p>
+              <button id="capture" class="primary" disabled>让本地电脑截图并提问</button>
+              <p id="status" class="status">等待连接设备</p>
+            </section>
+
+            <section id="live-card" class="card live-card" hidden>
+              <div class="section-title">
+                <h2>本次实时结果</h2>
+                <span id="answer-state">等待中</span>
+              </div>
+              <div class="message-thread live-thread">
+                <article class="message-row user-message">
+                  <div class="message-avatar">你</div>
+                  <div class="message-bubble image-bubble">
+                    <div class="message-label">本地电脑截图</div>
+                    <p id="live-prompt" class="message-prompt"></p>
+                    <div id="live-preview-empty" class="preview-empty">等待桌面上传截图</div>
+                    <img id="live-screenshot" alt="桌面端本次截图" hidden />
+                  </div>
+                </article>
+                <article class="message-row assistant-message">
+                  <div class="message-avatar ai">AI</div>
+                  <div class="message-bubble answer-bubble">
+                    <div class="message-label">AI 回复</div>
+                    <div id="live-answer" class="markdown-body">等待模型回答…</div>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <div class="history-heading">
+              <div>
+                <span class="caption">HISTORY</span>
+                <h2>截图与回答记录</h2>
+              </div>
+              <span id="turn-count" class="muted">0 条</span>
+            </div>
+            <section id="turn-list" class="turn-list">
+              <div class="card empty-history">选择或新建一个会话</div>
+            </section>
+          </section>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

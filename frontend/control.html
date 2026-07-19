@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QA Control</title>
+    <link rel="stylesheet" href="/frontend/styles.css" />
+  </head>
+  <body class="control">
+    <header>
+      <h1>QA Snapshot</h1>
+      <span class="muted" id="status">starting…</span>
+    </header>
+
+    <section>
+      <h2>云端配置</h2>
+      <div class="config-grid">
+        <label>API 地址<input id="cloud-url" placeholder="https://qa.example.com" /></label>
+        <label>网页地址<input id="web-url" placeholder="通常与 API 地址相同" /></label>
+        <label>设备 ID<input id="device-id-config" placeholder="desktop-1" /></label>
+        <label>设备 Token<input id="device-token" type="password" placeholder="留空则保留已保存 Token" /></label>
+      </div>
+      <button id="save-config">保存并重新连接</button>
+    </section>
+
+    <section>
+      <h2>手机网页</h2>
+      <div class="row">
+        <code id="url">—</code>
+        <button id="copy">复制</button>
+        <button id="open">在浏览器打开</button>
+      </div>
+      <p class="muted">设备 ID：<code id="device">—</code>。手机可通过公网访问此地址，无需与电脑处于同一 Wi-Fi。</p>
+      <div id="qr"></div>
+    </section>
+
+    <section>
+      <h2>触发截图问答</h2>
+      <textarea id="q" rows="3" placeholder="可选：自定义问题，留空则用默认 prompt"></textarea>
+      <div class="row">
+        <button id="capture">立即截图并提问</button>
+        <button id="toggle">显示/隐藏 Overlay</button>
+        <label>
+          <input type="checkbox" id="protect" checked />
+          Overlay 反截屏保护
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>快捷键</h2>
+      <p class="muted">Ctrl + Shift + Space（macOS / Windows 通用）</p>
+    </section>
+  </body>
+  <script type="module" src="/frontend/control.ts"></script>
+</html>

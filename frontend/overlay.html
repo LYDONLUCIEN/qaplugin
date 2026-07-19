@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>QA Overlay</title>
+    <link rel="stylesheet" href="/frontend/styles.css" />
+  </head>
+  <body class="overlay">
+    <div id="bar">
+      <span class="dot"></span>
+      <span class="title">QA</span>
+      <span class="muted" id="state">idle</span>
+      <span class="grow"></span>
+      <button id="pin" aria-pressed="true" title="保持窗口在最前面">已钉住</button>
+      <button id="hide" title="隐藏 QA 小窗">隐藏</button>
+    </div>
+    <div id="content" class="overlay-content">
+      <p class="placeholder">按 Ctrl+Shift+Space 触发，或手机端按钮…</p>
+    </div>
+  </body>
+  <script type="module" src="/frontend/overlay.ts"></script>
+</html>

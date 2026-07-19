@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "QA Snapshot",
+  "version": "0.1.0",
+  "identifier": "com.qasnapshot.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev:tauri",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "overlay",
+        "title": "QA Overlay",
+        "url": "frontend/overlay.html",
+        "width": 480,
+        "height": 320,
+        "x": 100,
+        "y": 100,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": true
+      },
+      {
+        "label": "control",
+        "title": "QA Control",
+        "url": "frontend/control.html",
+        "width": 720,
+        "height": 540,
+        "resizable": true,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "exceptionDomain": "",
+      "signingIdentity": null
+    },
+    "windows": {}
+  },
+  "plugins": {}
+}

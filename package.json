@@ -1,0 +1,29 @@
+{
+  "name": "qa-snapshot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:tauri": "npm run build && vite",
+    "build": "vite build",
+    "cloud:web:build": "npm --prefix apps/cloud-web run build",
+    "cloud:run": "cargo run -p qa-api",
+    "check": "tsc --noEmit && vite build && npm run cloud:web:build && cargo check --workspace",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "typescript": "^5.6.0",
+    "vite": "^8.1.4"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "dompurify": "^3.4.12",
+    "marked": "^18.0.6"
+  }
+}

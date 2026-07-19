@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main windows",
+  "windows": ["control", "overlay"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-start-dragging",
+    "core:event:default",
+    "core:webview:default",
+    "opener:allow-open-url",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
+  ]
+}

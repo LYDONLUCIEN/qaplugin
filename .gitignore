@@ -1,0 +1,75 @@
+# 环境变量与本地密钥（示例配置需要提交）
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+
+# 前端依赖、缓存与构建产物
+node_modules/
+**/node_modules/
+.vite/
+**/.vite/
+dist/
+**/dist/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# Rust / Tauri 构建产物
+target/
+**/target/
+src-tauri/gen/
+*.dmg
+*.app/
+*.msi
+*.AppImage
+*.deb
+*.rpm
+
+# 运行数据：数据库中包含截图、问答历史、会话及账户信息
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# 用户截图、上传图片和其他可能包含隐私的图片内容
+screenshots/
+captures/
+uploads/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.heif
+*.avif
+
+# Tauri 安装包所需的应用图标属于源码资源，允许提交
+!src-tauri/icons/**
+
+# 日志、临时文件与编辑器本地配置
+*.log
+logs/
+tmp/
+temp/
+.cache/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/settings.local.json
+*.swp
+*.swo
+*~
