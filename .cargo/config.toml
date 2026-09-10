@@ -1,0 +1,15 @@
+# Use a mainland-China mirror for crates.io during Docker/cloud builds.
+# RsProxy supports Cargo's sparse index protocol and mirrors crate downloads.
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[net]
+retry = 5
+
+[http]
+timeout = 120
+low-speed-limit = 1
+multiplexing = false
