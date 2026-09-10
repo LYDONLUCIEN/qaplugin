@@ -4,6 +4,8 @@ use tauri::{Emitter, WebviewWindow};
 pub async fn capture_to_bytes() -> Result<Vec<u8>> {
     use tokio::io::AsyncReadExt;
 
+    ensure_screen_capture_permission()?;
+
     let tmp = std::env::temp_dir().join(format!("qa-snap-{}.png", uuid::Uuid::new_v4()));
     let path = tmp.to_string_lossy().to_string();
     let output = tokio::process::Command::new("/usr/sbin/screencapture")
@@ -26,6 +28,32 @@ pub async fn capture_to_bytes() -> Result<Vec<u8>> {
         anyhow::bail!("empty screenshot");
     }
     Ok(bytes)
+}
+
+/// TCC grants Screen Recording to the calling app identity. Check it before
+/// launching the `screencapture` helper so a denied or stale ad-hoc signature
+/// produces an actionable error instead of just its generic exit status 1.
+fn ensure_screen_capture_permission() -> Result<()> {
+    unsafe {
+        if CGPreflightScreenCaptureAccess() {
+            return Ok(());
+        }
+        let _ = CGRequestScreenCaptureAccess();
+        if CGPreflightScreenCaptureAccess() {
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "Screen Recording permission is not granted to this QA Snapshot build. \
+         Enable QA Snapshot in System Settings > Privacy & Security > Screen Recording, \
+         then quit and reopen the app. Rebuilding an ad-hoc signed app may require granting it again."
+    )
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
 }
 
 pub fn set_window_protected(window: &WebviewWindow, protected: bool) -> Result<()> {
