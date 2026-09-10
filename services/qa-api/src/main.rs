@@ -96,6 +96,12 @@ struct DeviceQuery {
     device_id: String,
 }
 
+#[derive(Serialize)]
+struct ModelProfilesResponse {
+    default_model_profile: String,
+    profiles: Vec<crate::config::ModelProfile>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -157,6 +163,11 @@ async fn main() -> anyhow::Result<()> {
             "/v1/admin/devices/:device_id/owner",
             put(admin_assign_device),
         )
+        .route("/v1/model-profiles", get(model_profiles))
+        .route(
+            "/v1/model-profiles/:profile_id/test",
+            post(model_profile_test),
+        )
         .route("/v1/answers/stream", post(answer_stream))
         .route("/v1/turns/:turn_id/screenshot", get(turn_screenshot))
         .route("/v1/devices/connect", get(device_ws))
@@ -178,6 +189,92 @@ async fn main() -> anyhow::Result<()> {
 
 async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}))
+}
+
+/// Lists only public profile names. The corresponding provider API keys remain
+/// in the cloud process environment and are never returned to a desktop.
+async fn model_profiles(
+    State(state): State<AppState>,
+    Query(query): Query<DeviceQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if !authorized_device(&state.config, &headers, &query.device_id) {
+        return (StatusCode::UNAUTHORIZED, "invalid device credentials").into_response();
+    }
+    Json(ModelProfilesResponse {
+        default_model_profile: state.config.default_model_profile.clone(),
+        profiles: state.config.model_profiles.clone(),
+    })
+    .into_response()
+}
+
+/// Exercises the selected provider using a tiny image. This is intentionally a
+/// real request so an invalid provider key/model/vision endpoint is detected;
+/// callers should label it as a small billable model test.
+async fn model_profile_test(
+    State(state): State<AppState>,
+    Path(profile_id): Path<String>,
+    Query(query): Query<DeviceQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if !authorized_device(&state.config, &headers, &query.device_id) {
+        return (StatusCode::UNAUTHORIZED, "invalid device credentials").into_response();
+    }
+    let mut cfg = match llm_config_for_profile(&state.config, &profile_id) {
+        Ok(config) => config,
+        Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
+    };
+    cfg.max_tokens = cfg.max_tokens.clamp(16, 32);
+    if let Some(ocr) = cfg.ocr.as_mut() {
+        ocr.max_tokens = ocr.max_tokens.clamp(16, 128);
+    }
+    // A valid 1×1 PNG. It checks the vision request shape without transferring
+    // a real desktop screenshot or creating a history record.
+    const TEST_IMAGE_B64: &str =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9J8l8AAAAASUVORK5CYII=";
+    let result = tokio::time::timeout(Duration::from_secs(25), async {
+        let mut stream = ai::stream_answer(
+            &cfg,
+            "这是连通性测试。请只回复 OK。",
+            TEST_IMAGE_B64,
+            "image/png",
+        )
+        .await?;
+        match stream.next().await {
+            Some(Ok(delta)) if !delta.trim().is_empty() => Ok::<String, anyhow::Error>(delta),
+            Some(Err(error)) => Err(error),
+            _ => Err(anyhow::anyhow!("model returned no streaming text")),
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(sample)) => Json(serde_json::json!({
+            "ok": true,
+            "profileId": profile_id,
+            "sample": sample,
+        }))
+        .into_response(),
+        Ok(Err(error)) => json_error(
+            StatusCode::BAD_GATEWAY,
+            &format!("model test failed: {error}"),
+        ),
+        Err(_) => json_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "model test timed out after 25 seconds",
+        ),
+    }
+}
+
+fn llm_config_for_profile(config: &CloudConfig, profile_id: &str) -> Result<ai::LlmConfig, String> {
+    if !config.has_model_profile(profile_id) {
+        return Err(format!("unknown model profile '{profile_id}'"));
+    }
+    if profile_id == "default" {
+        ai::LlmConfig::from_env()
+    } else {
+        ai::LlmConfig::from_profile(Some(profile_id))
+    }
+    .map_err(|error| error.to_string())
 }
 
 async fn turn_screenshot(
@@ -630,7 +727,14 @@ async fn answer_stream(
         let _guard = device.answer_lock.lock().await;
         yield Ok::<Event, Infallible>(sse_event(&QaEvent::Uploading));
 
-        let cfg = match ai::LlmConfig::from_env() {
+        let profile_id = request
+            .model_profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&state.config.default_model_profile)
+            .to_string();
+        let cfg = match llm_config_for_profile(&state.config, &profile_id) {
             Ok(cfg) => cfg,
             Err(error) => {
                 let message = format!("LLM config: {error}");

@@ -8,8 +8,9 @@
 // Vision payloads are emitted in the correct shape per provider.
 //
 // Config via env:
-//   LLM_PROVIDER   = anthropic | openai | deepseek | qwen | glm | kimi |
-//                    openrouter | doubao  (case-insensitive; default: auto)
+//   LLM_PROVIDER   = anthropic | openai | deepseek | deepseek-vision | qwen |
+//                    glm | kimi | openrouter | doubao
+//                    (case-insensitive; default: auto)
 //   LLM_BASE_URL   = override base, e.g. https://api.deepseek.com
 //   LLM_API_KEY    = key for the chosen provider
 //                    (falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY /
@@ -29,6 +30,8 @@ use image::imageops::FilterType;
 use reqwest::Client;
 use serde::Serialize;
 use std::pin::Pin;
+
+use crate::config::profile_env_key;
 
 const DEFAULT_MAX_TOKENS: u32 = 1024;
 const DEFAULT_OCR_MAX_TOKENS: u32 = 4096;
@@ -72,30 +75,48 @@ pub struct LlmConfig {
 
 impl LlmConfig {
     pub fn from_env() -> Result<Self> {
-        let provider_str = std::env::var("LLM_PROVIDER")
+        Self::from_profile(None)
+    }
+
+    /// Loads either the legacy single `LLM_*` configuration or one named
+    /// `QA_MODEL_<PROFILE>_*` configuration. A profile never falls back to a
+    /// different profile's key, which prevents accidentally billing/using the
+    /// wrong provider when several models are enabled.
+    pub fn from_profile(profile_id: Option<&str>) -> Result<Self> {
+        let provider_str = scoped_env(profile_id, "PROVIDER", "LLM_PROVIDER")
             .unwrap_or_default()
             .to_lowercase();
 
         // Resolve API key from any of the supported env vars.
-        let api_key = [
-            "LLM_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "OPENAI_API_KEY",
-            "DEEPSEEK_API_KEY",
-            "DASHSCOPE_API_KEY",
-            "MOONSHOT_API_KEY",
-            "ZHIPU_API_KEY",
-            "OPENROUTER_API_KEY",
-        ]
-        .iter()
-        .find_map(|n| std::env::var(n).ok().filter(|s| !s.is_empty()))
-        .ok_or_else(|| {
-            anyhow!(
-                "No LLM API key set. Set one of: LLM_API_KEY, ANTHROPIC_API_KEY, \
-                 OPENAI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, \
-                 ZHIPU_API_KEY, OPENROUTER_API_KEY"
-            )
-        })?;
+        let api_key = match profile_id {
+            Some(profile_id) => {
+                scoped_env(Some(profile_id), "API_KEY", "LLM_API_KEY").ok_or_else(|| {
+                    anyhow!(
+                        "model profile '{profile_id}' requires {}",
+                        profile_env_key(profile_id, "API_KEY")
+                    )
+                })?
+            }
+            None => [
+                "LLM_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "DEEPSEEK_API_KEY",
+                "DASHSCOPE_API_KEY",
+                "MOONSHOT_API_KEY",
+                "ZHIPU_API_KEY",
+                "OPENROUTER_API_KEY",
+            ]
+            .iter()
+            .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "No LLM API key set. Set one of: LLM_API_KEY, ANTHROPIC_API_KEY, \
+                     OPENAI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, \
+                     ZHIPU_API_KEY, OPENROUTER_API_KEY"
+                )
+            })?,
+        };
 
         // Map named provider → enum.
         let (provider, default_base, default_model) = match provider_str.as_str() {
@@ -113,6 +134,14 @@ impl LlmConfig {
                 Provider::OpenAiCompatible,
                 "https://api.deepseek.com",
                 "deepseek-chat",
+            ),
+            // `deepseek-chat` is text-only. Keep it as the generic DeepSeek
+            // default so existing OCR → text configurations keep working, and
+            // provide an explicit safe default for direct screenshot analysis.
+            "deepseek-vision" | "deepseek_vision" | "deepseek-v4-flash-vision-exp" => (
+                Provider::OpenAiCompatible,
+                "https://api.deepseek.com",
+                "deepseek-v4-flash-vision-exp",
             ),
             "qwen" | "dashscope" | "tongyi" => (
                 Provider::OpenAiCompatible,
@@ -158,20 +187,21 @@ impl LlmConfig {
             other => {
                 return Err(anyhow!(
                     "Unknown LLM_PROVIDER='{other}'. Valid: anthropic, openai, deepseek, \
-                 qwen, glm, kimi, doubao, openrouter"
+                 deepseek-vision, qwen, glm, kimi, doubao, openrouter"
                 ))
             }
         };
 
-        let base_url = std::env::var("LLM_BASE_URL").unwrap_or_else(|_| default_base.into());
-        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| default_model.into());
-        let max_tokens = std::env::var("LLM_MAX_TOKENS")
-            .ok()
+        let base_url = scoped_env(profile_id, "BASE_URL", "LLM_BASE_URL")
+            .unwrap_or_else(|| default_base.into());
+        let model =
+            scoped_env(profile_id, "MODEL", "LLM_MODEL").unwrap_or_else(|| default_model.into());
+        let max_tokens = scoped_env(profile_id, "MAX_TOKENS", "LLM_MAX_TOKENS")
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_MAX_TOKENS);
 
-        let analysis_mode = match std::env::var("QA_ANALYSIS_MODE")
-            .unwrap_or_else(|_| "vision".to_string())
+        let analysis_mode = match scoped_env(profile_id, "ANALYSIS_MODE", "QA_ANALYSIS_MODE")
+            .unwrap_or_else(|| "vision".to_string())
             .trim()
             .to_ascii_lowercase()
             .as_str()
@@ -187,13 +217,14 @@ impl LlmConfig {
         let ocr = if analysis_mode == AnalysisMode::Ocr {
             let fallback_key = matches!(provider_str.as_str(), "qwen" | "dashscope" | "tongyi")
                 .then_some(api_key.as_str());
-            Some(OcrConfig::from_env(fallback_key)?)
+            Some(OcrConfig::from_env(profile_id, fallback_key)?)
         } else {
             None
         };
 
         log::info!(
-            "LLM config: provider={provider:?} model={model} base={base_url} analysis={analysis_mode:?}"
+            "LLM config: profile={} provider={provider:?} model={model} base={base_url} analysis={analysis_mode:?}",
+            profile_id.unwrap_or("default")
         );
 
         Ok(LlmConfig {
@@ -209,14 +240,16 @@ impl LlmConfig {
 }
 
 impl OcrConfig {
-    fn from_env(fallback_api_key: Option<&str>) -> Result<Self> {
-        let api_key = std::env::var("OCR_API_KEY")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
+    fn from_env(profile_id: Option<&str>, fallback_api_key: Option<&str>) -> Result<Self> {
+        let api_key = scoped_env(profile_id, "OCR_API_KEY", "OCR_API_KEY")
             .or_else(|| {
-                std::env::var("DASHSCOPE_API_KEY")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
+                if profile_id.is_none() {
+                    std::env::var("DASHSCOPE_API_KEY")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                } else {
+                    None
+                }
             })
             .or_else(|| fallback_api_key.map(str::to_string))
             .ok_or_else(|| {
@@ -225,17 +258,27 @@ impl OcrConfig {
                 )
             })?;
         Ok(Self {
-            base_url: std::env::var("OCR_BASE_URL")
-                .unwrap_or_else(|_| "https://dashscope.aliyuncs.com/compatible-mode".to_string()),
+            base_url: scoped_env(profile_id, "OCR_BASE_URL", "OCR_BASE_URL")
+                .unwrap_or_else(|| "https://dashscope.aliyuncs.com/compatible-mode".to_string()),
             api_key,
-            model: std::env::var("OCR_MODEL").unwrap_or_else(|_| "qwen-vl-ocr".to_string()),
-            max_tokens: std::env::var("OCR_MAX_TOKENS")
-                .ok()
+            model: scoped_env(profile_id, "OCR_MODEL", "OCR_MODEL")
+                .unwrap_or_else(|| "qwen-vl-ocr".to_string()),
+            max_tokens: scoped_env(profile_id, "OCR_MAX_TOKENS", "OCR_MAX_TOKENS")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(DEFAULT_OCR_MAX_TOKENS),
-            prompt: std::env::var("OCR_PROMPT").unwrap_or_else(|_| DEFAULT_OCR_PROMPT.to_string()),
+            prompt: scoped_env(profile_id, "OCR_PROMPT", "OCR_PROMPT")
+                .unwrap_or_else(|| DEFAULT_OCR_PROMPT.to_string()),
         })
     }
+}
+
+fn scoped_env(profile_id: Option<&str>, profile_field: &str, legacy_name: &str) -> Option<String> {
+    let name = profile_id
+        .map(|profile_id| profile_env_key(profile_id, profile_field))
+        .unwrap_or_else(|| legacy_name.to_string());
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 type BoxStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;

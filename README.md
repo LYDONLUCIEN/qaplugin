@@ -126,6 +126,48 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
 
 也可以填写百炼控制台提供的工作空间专属 `/compatible-mode/v1` 地址。桌面截图会在云端调用模型前转换为 Base64 Data URL；超过限制的大截图会自动缩放并压缩为 JPEG。
 
+如要改用 DeepSeek V4 Flash Vision 直接理解截图，保持视觉模式，并在云端 `.env.cloud` 替换完整的 `LLM_*` 配置：
+
+```dotenv
+QA_ANALYSIS_MODE=vision
+LLM_PROVIDER=deepseek-vision
+LLM_API_KEY=<DeepSeek API Key>
+LLM_MODEL=deepseek-v4-flash-vision-exp
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MAX_TOKENS=1024
+```
+
+`deepseek-vision` 是这个视觉模型的明确选择；也可用 `LLM_PROVIDER=deepseek` 加上相同的 `LLM_MODEL`。不能只在视觉模式中设置 `LLM_PROVIDER=deepseek`，因为其默认 `deepseek-chat` 是纯文本模型。
+
+### 多模型档案与桌面选择
+
+默认情况下，`.env.cloud` 中的一套 `LLM_*` 就是唯一的“服务器默认模型”。`.env.cloud.example` 的注释不会自动写入你已经创建的 `.env.cloud`，所以旧文件看不到后来新增的选项；这是为了避免更新代码时覆盖你服务器上的密码和 API Key。
+
+如同时保留 Qwen 和 DeepSeek，请在云端 `.env.cloud` 加入以下内容，并填入两家的真实 Key：
+
+```dotenv
+QA_MODEL_PROFILES=qwen,deepseek-vision
+QA_DEFAULT_MODEL_PROFILE=qwen
+
+QA_MODEL_QWEN_LABEL='Qwen 3.7 Plus'
+QA_MODEL_QWEN_PROVIDER=qwen
+QA_MODEL_QWEN_API_KEY=<百炼 API Key>
+QA_MODEL_QWEN_MODEL=qwen3.7-plus
+QA_MODEL_QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QA_MODEL_QWEN_ANALYSIS_MODE=vision
+QA_MODEL_QWEN_MAX_TOKENS=1024
+
+QA_MODEL_DEEPSEEK_VISION_LABEL='DeepSeek V4 Flash Vision'
+QA_MODEL_DEEPSEEK_VISION_PROVIDER=deepseek-vision
+QA_MODEL_DEEPSEEK_VISION_API_KEY=<DeepSeek API Key>
+QA_MODEL_DEEPSEEK_VISION_MODEL=deepseek-v4-flash-vision-exp
+QA_MODEL_DEEPSEEK_VISION_BASE_URL=https://api.deepseek.com
+QA_MODEL_DEEPSEEK_VISION_ANALYSIS_MODE=vision
+QA_MODEL_DEEPSEEK_VISION_MAX_TOKENS=1024
+```
+
+部署后打开桌面 `QA Control`，先点击“测试云端并读取模型”，选择需要的模型链路，再点“保存并重新连接”。前一个测试会检查 `/healthz`、设备 Token 和模型档案列表，不调用模型；“测试所选模型”会用 1×1 图片和极短提示验证 API Key、模型名、视觉输入与流式输出，会消耗极少量 Token。模型 Key 始终只在云端；手机发起截图时使用电脑已经保存的选择。
+
 如果截图任务主要依赖文字，也可以启用“OCR → 文本大模型”两段式管线。Qwen-OCR 只负责从截图提取文字，第二阶段可使用 DeepSeek 等纯文本模型，并继续流式输出：
 
 ```dotenv
@@ -144,7 +186,7 @@ LLM_MAX_TOKENS=1024
 
 默认 `QA_ANALYSIS_MODE=vision`。OCR 模式适合代码、网页、表格和文字题；如果任务依赖图片、图表、颜色、空间位置或纯视觉内容，应继续使用视觉模式。历史截图由网页按需通过鉴权接口加载，不再把一个会话的全部 Base64 图片塞进单条 WebSocket 消息，更适合手机网络。
 
-`start-cloud.sh` 在存在 `.env.cloud` 时只读取该文件，不会混入旧 `.env` 的 DeepSeek/OpenAI 地址；切换模型供应商时请把完整的 `LLM_*` 配置放在 `.env.cloud`。
+`start-cloud.sh` 在存在 `.env.cloud` 时只读取该文件，不会混入旧 `.env` 的 DeepSeek/OpenAI 地址。改完单模型 `LLM_*` 或多模型 `QA_MODEL_*` 配置后，执行 `./start-cloud.sh restart`；修改了程序代码或 Dockerfile 时再执行 `./start-cloud.sh deploy`。
 
 ### 4. 测试
 

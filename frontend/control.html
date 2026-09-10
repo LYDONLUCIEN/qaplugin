@@ -19,8 +19,18 @@
         <label>网页地址<input id="web-url" placeholder="通常与 API 地址相同" /></label>
         <label>设备 ID<input id="device-id-config" placeholder="desktop-1" /></label>
         <label>设备 Token<input id="device-token" type="password" placeholder="留空则保留已保存 Token" /></label>
+        <label>模型链路
+          <select id="model-profile">
+            <option value="">服务器默认模型（先测试读取列表）</option>
+          </select>
+        </label>
       </div>
-      <button id="save-config">保存并重新连接</button>
+      <div class="row">
+        <button id="test-cloud" class="secondary">测试云端并读取模型</button>
+        <button id="test-model" class="secondary">测试所选模型（少量 Token）</button>
+        <button id="save-config">保存并重新连接</button>
+      </div>
+      <p class="muted">模型密钥只保存在云服务器。测试会校验 API、设备 Token，并读取可用模型；手机触发截图时会使用此电脑保存的选择。</p>
     </section>
 
     <section>

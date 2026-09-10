@@ -61,6 +61,44 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
 
 也可以使用百炼控制台给出的工作空间专属 `/compatible-mode/v1` 地址。服务兼容带或不带 `/v1` 的 Base URL，并会把过大的 PNG 截图自动压缩后以 Base64 Data URL 发送。
 
+如使用 DeepSeek V4 Flash Vision 直接理解截图，请保持视觉模式，并替换完整的 `LLM_*` 配置：
+
+```dotenv
+QA_ANALYSIS_MODE=vision
+LLM_PROVIDER=deepseek-vision
+LLM_API_KEY=<DeepSeek API Key>
+LLM_MODEL=deepseek-v4-flash-vision-exp
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MAX_TOKENS=1024
+```
+
+`deepseek-vision` 是本项目为这个视觉模型提供的明确选择；也可写 `LLM_PROVIDER=deepseek` 并显式指定同一个 `LLM_MODEL`。不要在视觉模式中只写 `LLM_PROVIDER=deepseek`，其默认模型 `deepseek-chat` 是纯文本模型，不能接收截图。
+
+### 多模型档案：让桌面端选择 Qwen 或 DeepSeek
+
+`.env.cloud.example` 是新建配置的参考，不会覆盖已存在的 `.env.cloud`。如需在一台云服务器配置多个模型，加入以下档案（填入真实 Key）：
+
+```dotenv
+QA_MODEL_PROFILES=qwen,deepseek-vision
+QA_DEFAULT_MODEL_PROFILE=qwen
+
+QA_MODEL_QWEN_LABEL='Qwen 3.7 Plus'
+QA_MODEL_QWEN_PROVIDER=qwen
+QA_MODEL_QWEN_API_KEY=<百炼 API Key>
+QA_MODEL_QWEN_MODEL=qwen3.7-plus
+QA_MODEL_QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QA_MODEL_QWEN_ANALYSIS_MODE=vision
+
+QA_MODEL_DEEPSEEK_VISION_LABEL='DeepSeek V4 Flash Vision'
+QA_MODEL_DEEPSEEK_VISION_PROVIDER=deepseek-vision
+QA_MODEL_DEEPSEEK_VISION_API_KEY=<DeepSeek API Key>
+QA_MODEL_DEEPSEEK_VISION_MODEL=deepseek-v4-flash-vision-exp
+QA_MODEL_DEEPSEEK_VISION_BASE_URL=https://api.deepseek.com
+QA_MODEL_DEEPSEEK_VISION_ANALYSIS_MODE=vision
+```
+
+重新部署后，桌面 `QA Control` 点击“测试云端并读取模型”会同时验证云端健康状态和设备 Token，并列出档案；选择后点“保存并重新连接”。“测试所选模型”会使用 1×1 图片验证实际模型 API、Key、视觉输入与流式输出，消耗极少量 Token，不保存历史截图。手机发起的截图使用对应电脑已保存的模型选择，模型 Key 不会发送到桌面或手机。
+
 如果内容以文字为主，可以改成 Qwen-OCR 提取文字，再交给 DeepSeek 等文本模型回答：
 
 ```dotenv

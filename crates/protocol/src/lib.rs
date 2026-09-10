@@ -68,6 +68,10 @@ pub struct AnswerRequest {
     #[serde(default)]
     pub session_id: Option<String>,
     pub question: Option<String>,
+    /// Cloud-side model profile selected by this desktop device. API keys never
+    /// leave the cloud; this only names a profile configured in `.env.cloud`.
+    #[serde(default)]
+    pub model_profile: Option<String>,
     pub image_b64: String,
     pub mime_type: String,
 }

@@ -54,16 +54,74 @@ async fn save_cloud_config(
     web_url: String,
     device_id: String,
     device_token: Option<String>,
+    model_profile: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    let config = cloud::save(&app, cloud_url, web_url, device_id, device_token)
-        .await
-        .map_err(|error| error.to_string())?;
+    let config = cloud::save(
+        &app,
+        cloud_url,
+        web_url,
+        device_id,
+        device_token,
+        model_profile,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(serde_json::json!({
         "cloudUrl": config.cloud_url,
         "webUrl": config.web_url,
         "phoneUrl": config.phone_url(),
         "deviceId": config.device_id,
+        "modelProfile": config.model_profile,
+    }))
+}
+
+#[tauri::command]
+async fn test_cloud_connection(
+    cloud_url: String,
+    device_id: String,
+    device_token: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let device_token = device_token
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            cloud::current(&app)
+                .filter(|config| config.device_id == device_id.trim())
+                .map(|config| config.device_token)
+        })
+        .ok_or_else(|| "请输入设备 Token 后再测试".to_string())?;
+    let result = cloud::test_connection(cloud_url, device_id, device_token)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({
+        "defaultModelProfile": result.default_model_profile,
+        "profiles": result.profiles,
+    }))
+}
+
+#[tauri::command]
+async fn test_model_profile(
+    cloud_url: String,
+    device_id: String,
+    device_token: Option<String>,
+    model_profile: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let device_token = device_token
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            cloud::current(&app)
+                .filter(|config| config.device_id == device_id.trim())
+                .map(|config| config.device_token)
+        })
+        .ok_or_else(|| "请输入设备 Token 后再测试".to_string())?;
+    let result = cloud::test_model_profile(cloud_url, device_id, device_token, model_profile)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({
+        "profileId": result.profile_id,
+        "sample": result.sample,
     }))
 }
 
@@ -79,6 +137,7 @@ async fn get_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
             "webUrl": config.web_url,
             "phoneUrl": config.phone_url(),
             "deviceId": config.device_id,
+            "modelProfile": config.model_profile,
             "cloudConnected": cloud::connected(),
             "overlayVisible": overlay_visible,
             "configError": null,
@@ -168,6 +227,8 @@ pub fn run() {
             set_overlay_protected,
             toggle_overlay_visible,
             save_cloud_config,
+            test_cloud_connection,
+            test_model_profile,
             get_status,
         ])
         .run(tauri::generate_context!())

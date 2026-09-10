@@ -11,7 +11,11 @@ COPY . .
 RUN cargo build --release -p qa-api
 
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update \
+# Use the Alibaba Cloud Debian mirror for faster package installation on
+# Alibaba Cloud/East Asia hosts. This also covers debian-security because the
+# Bookworm sources file contains both hosts.
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 qa \

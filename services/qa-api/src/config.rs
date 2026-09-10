@@ -3,6 +3,13 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
+use serde::Serialize;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ModelProfile {
+    pub id: String,
+    pub label: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct CloudConfig {
@@ -15,6 +22,8 @@ pub struct CloudConfig {
     pub bootstrap_admin_password: Option<String>,
     pub auth_session_seconds: i64,
     pub cookie_secure: bool,
+    pub model_profiles: Vec<ModelProfile>,
+    pub default_model_profile: String,
 }
 
 impl CloudConfig {
@@ -73,6 +82,7 @@ impl CloudConfig {
             .ok()
             .and_then(|value| parse_bool(&value))
             .unwrap_or_else(|| !bind_addr.ip().is_loopback());
+        let (model_profiles, default_model_profile) = model_profiles_from_env()?;
 
         Ok(Self {
             bind_addr,
@@ -84,12 +94,96 @@ impl CloudConfig {
             bootstrap_admin_password,
             auth_session_seconds: auth_session_hours * 60 * 60,
             cookie_secure,
+            model_profiles,
+            default_model_profile,
         })
     }
 
     pub fn device_token(&self, device_id: &str) -> Option<&str> {
         self.device_tokens.get(device_id).map(String::as_str)
     }
+
+    pub fn has_model_profile(&self, profile_id: &str) -> bool {
+        self.model_profiles
+            .iter()
+            .any(|profile| profile.id == profile_id)
+    }
+}
+
+fn model_profiles_from_env() -> Result<(Vec<ModelProfile>, String)> {
+    let ids = std::env::var("QA_MODEL_PROFILES")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if ids.is_empty() {
+        return Ok((
+            vec![ModelProfile {
+                id: "default".to_string(),
+                label: "服务器默认模型".to_string(),
+            }],
+            "default".to_string(),
+        ));
+    }
+
+    let mut profiles = Vec::with_capacity(ids.len());
+    for id in ids {
+        validate_profile_id(&id)?;
+        if profiles
+            .iter()
+            .any(|profile: &ModelProfile| profile.id == id)
+        {
+            return Err(anyhow!("QA_MODEL_PROFILES has duplicate profile '{id}'"));
+        }
+        let label = std::env::var(profile_env_key(&id, "LABEL"))
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| id.clone());
+        profiles.push(ModelProfile { id, label });
+    }
+    let default_model_profile = std::env::var("QA_DEFAULT_MODEL_PROFILE")
+        .unwrap_or_else(|_| profiles[0].id.clone())
+        .trim()
+        .to_string();
+    if !profiles
+        .iter()
+        .any(|profile| profile.id == default_model_profile)
+    {
+        return Err(anyhow!(
+            "QA_DEFAULT_MODEL_PROFILE='{default_model_profile}' is not listed in QA_MODEL_PROFILES"
+        ));
+    }
+    Ok((profiles, default_model_profile))
+}
+
+pub fn profile_env_key(profile_id: &str, field: &str) -> String {
+    let normalized = profile_id
+        .chars()
+        .map(|character| match character {
+            'a'..='z' => character.to_ascii_uppercase(),
+            'A'..='Z' | '0'..='9' => character,
+            '-' | '_' => '_',
+            _ => '_',
+        })
+        .collect::<String>();
+    format!("QA_MODEL_{normalized}_{field}")
+}
+
+fn validate_profile_id(profile_id: &str) -> Result<()> {
+    if profile_id.is_empty()
+        || profile_id.len() > 64
+        || !profile_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(anyhow!(
+            "model profile id must be 1-64 characters using letters, numbers, '-' or '_'"
+        ));
+    }
+    Ok(())
 }
 
 fn parse_bool(value: &str) -> Option<bool> {

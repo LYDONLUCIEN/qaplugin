@@ -139,6 +139,18 @@
   LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
   LLM_MAX_TOKENS=1024
 
+  如果希望由 DeepSeek V4 Flash Vision 直接理解截图，保持
+  `QA_ANALYSIS_MODE=vision`，并将上面的全部 `LLM_*` 配置替换为：
+
+  LLM_PROVIDER=deepseek-vision
+  LLM_API_KEY=<DeepSeek API-Key>
+  LLM_MODEL=deepseek-v4-flash-vision-exp
+  LLM_BASE_URL=https://api.deepseek.com
+  LLM_MAX_TOKENS=1024
+
+  `deepseek-vision` 是视觉模型的明确选择；不要在视觉模式中只写
+  `LLM_PROVIDER=deepseek`，它默认指向纯文本的 `deepseek-chat`。
+
   注意这里的对应关系：
 
   QA_ADMIN_PASSWORD

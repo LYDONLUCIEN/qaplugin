@@ -44,6 +44,7 @@ anyhow = "1"
 # Base64 / image
 base64 = "0.22"
 async-stream = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }

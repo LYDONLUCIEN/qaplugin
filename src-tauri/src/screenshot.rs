@@ -1,9 +1,22 @@
 use futures_util::StreamExt;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 use qa_protocol::QaEvent;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
 static CAPTURE_LOCK: Mutex<()> = Mutex::const_new(());
+
+// A Retina full-screen PNG is often 8–20 MB. Compress locally before Base64
+// expands it for the public upload, while preserving enough pixels for UI text.
+const COMPRESS_ABOVE_BYTES: usize = 1_500_000;
+const MAX_UPLOAD_SIDE: u32 = 2048;
+const JPEG_QUALITY: u8 = 82;
+
+pub(crate) struct UploadImage {
+    pub bytes: Vec<u8>,
+    pub mime_type: &'static str,
+}
 
 pub async fn capture_and_ask(
     app: tauri::AppHandle,
@@ -20,13 +33,16 @@ pub async fn capture_and_ask(
     let image = crate::platform::capture_to_bytes()
         .await
         .map_err(|error| fail(&app, format!("capture failed: {error}")))?;
+    let image = compress_for_upload(image)
+        .map_err(|error| fail(&app, format!("screenshot compression failed: {error}")))?;
     crate::hub::emit(&app, QaEvent::Uploading);
 
     let config = crate::cloud::current(&app)
         .ok_or_else(|| fail(&app, "cloud config is not set".to_string()))?;
-    let mut events = crate::cloud::stream_answer(&config, &image, question, session_id)
-        .await
-        .map_err(|error| fail(&app, format!("cloud request failed: {error}")))?;
+    let mut events =
+        crate::cloud::stream_answer(&config, &image.bytes, image.mime_type, question, session_id)
+            .await
+            .map_err(|error| fail(&app, format!("cloud request failed: {error}")))?;
 
     let mut answer = String::new();
     while let Some(event) = events.next().await {
@@ -52,6 +68,52 @@ pub async fn capture_and_ask(
         ));
     }
     Ok(answer)
+}
+
+fn compress_for_upload(png: Vec<u8>) -> anyhow::Result<UploadImage> {
+    if png.len() <= COMPRESS_ABOVE_BYTES {
+        return Ok(UploadImage {
+            bytes: png,
+            mime_type: "image/png",
+        });
+    }
+
+    let original_len = png.len();
+    let original = image::load_from_memory(&png)?;
+    let resized = original.resize(MAX_UPLOAD_SIDE, MAX_UPLOAD_SIDE, FilterType::Lanczos3);
+    let rgb = resized.to_rgb8();
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, JPEG_QUALITY).encode(
+        rgb.as_raw(),
+        rgb.width(),
+        rgb.height(),
+        image::ColorType::Rgb8.into(),
+    )?;
+
+    // Avoid making already efficient PNG screenshots worse.
+    if jpeg.len() * 100 < original_len * 85 {
+        log::info!(
+            "compressed upload screenshot from {} to {} bytes ({}x{}, JPEG q{})",
+            original_len,
+            jpeg.len(),
+            rgb.width(),
+            rgb.height(),
+            JPEG_QUALITY
+        );
+        return Ok(UploadImage {
+            bytes: jpeg,
+            mime_type: "image/jpeg",
+        });
+    }
+    log::info!(
+        "kept PNG upload screenshot at {} bytes; JPEG would be {} bytes",
+        original_len,
+        jpeg.len()
+    );
+    Ok(UploadImage {
+        bytes: png,
+        mime_type: "image/png",
+    })
 }
 
 fn fail(app: &tauri::AppHandle, message: String) -> String {

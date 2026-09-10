@@ -12,12 +12,55 @@ interface HubEvent {
   message?: string;
 }
 
+interface ModelProfile {
+  id: string;
+  label: string;
+}
+
+interface ModelProfilesResponse {
+  defaultModelProfile: string;
+  profiles: ModelProfile[];
+}
+
 function setStatus(text: string) {
   const el = document.getElementById("status")!;
   el.textContent = text;
 }
 
 let configLoaded = false;
+
+function modelProfileSelect() {
+  return document.getElementById("model-profile") as HTMLSelectElement;
+}
+
+function setModelProfiles(profiles: ModelProfile[], selected: string, defaultProfile: string) {
+  const select = modelProfileSelect();
+  select.innerHTML = "";
+  for (const profile of profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.id === defaultProfile
+      ? `${profile.label}（服务器默认）`
+      : profile.label;
+    select.appendChild(option);
+  }
+  const wanted = selected || defaultProfile;
+  if (wanted && [...select.options].some((option) => option.value === wanted)) {
+    select.value = wanted;
+  }
+}
+
+function setSavedModelProfile(profileId: string) {
+  if (!profileId) return;
+  const select = modelProfileSelect();
+  if (![...select.options].some((option) => option.value === profileId)) {
+    const option = document.createElement("option");
+    option.value = profileId;
+    option.textContent = `${profileId}（已保存；请测试刷新列表）`;
+    select.appendChild(option);
+  }
+  select.value = profileId;
+}
 
 async function refreshStatus() {
   const s = await invoke<any>("get_status");
@@ -30,12 +73,14 @@ async function refreshStatus() {
     (document.getElementById("cloud-url") as HTMLInputElement).value = String(s.cloudUrl || "");
     (document.getElementById("web-url") as HTMLInputElement).value = String(s.webUrl || "");
     (document.getElementById("device-id-config") as HTMLInputElement).value = String(s.deviceId || "");
+    setSavedModelProfile(String(s.modelProfile || ""));
     configLoaded = true;
   }
   const url = String(s.phoneUrl || "");
   document.getElementById("url")!.textContent = url;
   document.getElementById("device")!.textContent = String(s.deviceId || "—");
-  setStatus(s.cloudConnected ? "云端已连接" : "云端重连中…");
+  const profile = String(s.modelProfile || "");
+  setStatus(s.cloudConnected ? `云端已连接${profile ? ` · ${profile}` : ""}` : "云端重连中…");
   await renderQR(url);
 }
 
@@ -104,6 +149,7 @@ async function main() {
     const webUrlInput = (document.getElementById("web-url") as HTMLInputElement).value.trim();
     const deviceId = (document.getElementById("device-id-config") as HTMLInputElement).value.trim();
     const deviceToken = (document.getElementById("device-token") as HTMLInputElement).value.trim();
+    const modelProfile = modelProfileSelect().value;
     setStatus("正在保存配置…");
     try {
       await invoke("save_cloud_config", {
@@ -111,12 +157,55 @@ async function main() {
         webUrl: webUrlInput || cloudUrl,
         deviceId,
         deviceToken: deviceToken || null,
+        modelProfile: modelProfile || null,
       });
       (document.getElementById("device-token") as HTMLInputElement).value = "";
       configLoaded = false;
       await refreshStatus();
     } catch (error) {
       setStatus("配置保存失败: " + error);
+    }
+  });
+
+  document.getElementById("test-cloud")?.addEventListener("click", async () => {
+    const cloudUrl = (document.getElementById("cloud-url") as HTMLInputElement).value.trim();
+    const deviceId = (document.getElementById("device-id-config") as HTMLInputElement).value.trim();
+    const deviceToken = (document.getElementById("device-token") as HTMLInputElement).value.trim();
+    const currentProfile = modelProfileSelect().value;
+    setStatus("正在测试云端、设备 Token 与模型列表…");
+    try {
+      const result = await invoke<ModelProfilesResponse>("test_cloud_connection", {
+        cloudUrl,
+        deviceId,
+        deviceToken: deviceToken || null,
+      });
+      setModelProfiles(result.profiles, currentProfile, result.defaultModelProfile);
+      setStatus(`测试成功：发现 ${result.profiles.length} 个模型链路`);
+    } catch (error) {
+      setStatus("测试失败: " + error);
+    }
+  });
+
+  document.getElementById("test-model")?.addEventListener("click", async () => {
+    const cloudUrl = (document.getElementById("cloud-url") as HTMLInputElement).value.trim();
+    const deviceId = (document.getElementById("device-id-config") as HTMLInputElement).value.trim();
+    const deviceToken = (document.getElementById("device-token") as HTMLInputElement).value.trim();
+    const modelProfile = modelProfileSelect().value;
+    if (!modelProfile) {
+      setStatus("请先测试云端并选择模型链路");
+      return;
+    }
+    setStatus(`正在测试 ${modelProfile}（会消耗少量 Token）…`);
+    try {
+      const result = await invoke<{ profileId: string; sample: string }>("test_model_profile", {
+        cloudUrl,
+        deviceId,
+        deviceToken: deviceToken || null,
+        modelProfile,
+      });
+      setStatus(`模型测试成功 · ${result.profileId}: ${result.sample}`);
+    } catch (error) {
+      setStatus("模型测试失败: " + error);
     }
   });
 

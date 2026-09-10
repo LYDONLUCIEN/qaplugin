@@ -35,7 +35,7 @@ body.control h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.
 body.control .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 body.control textarea { width: 100%; background: var(--bg-elev); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; resize: vertical; }
 body.control textarea:focus { outline: 1px solid var(--accent); }
-body.control input[type="text"], body.control input[type="password"], body.control input:not([type]) {
+body.control input[type="text"], body.control input[type="password"], body.control input:not([type]), body.control select {
   width: 100%; background: var(--bg-elev); color: var(--fg); border: 1px solid var(--border);
   border-radius: 6px; padding: 8px 10px; font: inherit;
 }

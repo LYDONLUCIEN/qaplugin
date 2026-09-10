@@ -22,6 +22,27 @@ pub struct CloudConfig {
     pub web_url: String,
     pub device_id: String,
     pub device_token: String,
+    #[serde(default)]
+    pub model_profile: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModelProfile {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModelProfilesResponse {
+    pub default_model_profile: String,
+    pub profiles: Vec<ModelProfile>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ModelProfileTestResponse {
+    #[serde(rename = "profileId")]
+    pub profile_id: String,
+    pub sample: String,
 }
 
 impl CloudConfig {
@@ -45,7 +66,13 @@ impl CloudConfig {
         {
             return Err(anyhow!("invalid QA_DEVICE_ID"));
         }
-        Self::new(cloud_url, web_url, device_id, required("QA_DEVICE_TOKEN")?)
+        Self::with_model_profile(
+            cloud_url,
+            web_url,
+            device_id,
+            required("QA_DEVICE_TOKEN")?,
+            std::env::var("QA_MODEL_PROFILE").unwrap_or_default(),
+        )
     }
 
     pub fn new(
@@ -53,6 +80,16 @@ impl CloudConfig {
         web_url: String,
         device_id: String,
         device_token: String,
+    ) -> Result<Self> {
+        Self::with_model_profile(cloud_url, web_url, device_id, device_token, String::new())
+    }
+
+    pub fn with_model_profile(
+        cloud_url: String,
+        web_url: String,
+        device_id: String,
+        device_token: String,
+        model_profile: String,
     ) -> Result<Self> {
         let cloud_url = cloud_url.trim().trim_end_matches('/').to_string();
         let web_url = web_url.trim().trim_end_matches('/').to_string();
@@ -80,6 +117,7 @@ impl CloudConfig {
             web_url,
             device_id,
             device_token,
+            model_profile: model_profile.trim().to_string(),
         })
     }
 
@@ -111,9 +149,23 @@ pub struct CloudConfigState {
 
 pub fn init(app: &AppHandle) {
     let path = config_path(app).unwrap_or_else(|_| PathBuf::from("qa-cloud-config.json"));
+    let saved = load_file(&path).ok();
     let config = CloudConfig::from_env()
         .ok()
-        .or_else(|| load_file(&path).ok());
+        .map(|mut from_env| {
+            // Development launch scripts often provide the connection variables
+            // from `.env.desktop`. Preserve a profile chosen in the Control UI
+            // unless QA_MODEL_PROFILE explicitly overrides it for this device.
+            if from_env.model_profile.is_empty() {
+                if let Some(saved) = saved.as_ref().filter(|saved| {
+                    saved.cloud_url == from_env.cloud_url && saved.device_id == from_env.device_id
+                }) {
+                    from_env.model_profile = saved.model_profile.clone();
+                }
+            }
+            from_env
+        })
+        .or(saved);
     let (sender, _) = watch::channel(config);
     app.manage(CloudConfigState { sender, path });
 }
@@ -129,6 +181,7 @@ pub async fn save(
     web_url: String,
     device_id: String,
     device_token: Option<String>,
+    model_profile: Option<String>,
 ) -> Result<CloudConfig> {
     let state = app
         .try_state::<CloudConfigState>()
@@ -143,7 +196,18 @@ pub async fn save(
                 .map(|config| config.device_token.clone())
         })
         .ok_or_else(|| anyhow!("device token is required"))?;
-    let config = CloudConfig::new(cloud_url, web_url, device_id, token)?;
+    let model_profile = model_profile
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            state
+                .sender
+                .borrow()
+                .as_ref()
+                .map(|config| config.model_profile.clone())
+        })
+        .unwrap_or_default();
+    let config =
+        CloudConfig::with_model_profile(cloud_url, web_url, device_id, token, model_profile)?;
     if let Some(parent) = state.path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -160,11 +224,12 @@ fn config_path(app: &AppHandle) -> Result<PathBuf> {
 fn load_file(path: &PathBuf) -> Result<CloudConfig> {
     let body = std::fs::read(path)?;
     let saved: CloudConfig = serde_json::from_slice(&body)?;
-    CloudConfig::new(
+    CloudConfig::with_model_profile(
         saved.cloud_url,
         saved.web_url,
         saved.device_id,
         saved.device_token,
+        saved.model_profile,
     )
 }
 
@@ -172,11 +237,93 @@ pub fn connected() -> bool {
     CONNECTED.load(Ordering::Relaxed)
 }
 
+pub async fn test_connection(
+    cloud_url: String,
+    device_id: String,
+    device_token: String,
+) -> Result<ModelProfilesResponse> {
+    let config = CloudConfig::new(cloud_url.clone(), cloud_url, device_id, device_token)?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
+        .user_agent("qa-snapshot-desktop/0.1")
+        .build()?;
+    let health = client
+        .get(format!("{}/healthz", config.cloud_url))
+        .send()
+        .await
+        .context("cloud health check failed")?;
+    if !health.status().is_success() {
+        return Err(anyhow!("cloud health check returned {}", health.status()));
+    }
+    let profiles = client
+        .get(format!(
+            "{}/v1/model-profiles?device_id={}",
+            config.cloud_url, config.device_id
+        ))
+        .bearer_auth(&config.device_token)
+        .send()
+        .await
+        .context("model profile check failed")?;
+    if !profiles.status().is_success() {
+        let status = profiles.status();
+        let body = profiles.text().await.unwrap_or_default();
+        return Err(anyhow!("model profile check returned {status}: {body}"));
+    }
+    let payload = profiles
+        .json::<ModelProfilesResponse>()
+        .await
+        .context("invalid model profile response")?;
+    if payload.profiles.is_empty() {
+        return Err(anyhow!("cloud returned no model profiles"));
+    }
+    Ok(payload)
+}
+
+pub async fn test_model_profile(
+    cloud_url: String,
+    device_id: String,
+    device_token: String,
+    profile_id: String,
+) -> Result<ModelProfileTestResponse> {
+    let config = CloudConfig::new(cloud_url.clone(), cloud_url, device_id, device_token)?;
+    if profile_id.trim().is_empty()
+        || !profile_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(anyhow!("invalid model profile"));
+    }
+    let response = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(35))
+        .user_agent("qa-snapshot-desktop/0.1")
+        .build()?
+        .post(format!(
+            "{}/v1/model-profiles/{}/test?device_id={}",
+            config.cloud_url, profile_id, config.device_id
+        ))
+        .bearer_auth(&config.device_token)
+        .send()
+        .await
+        .context("model test request failed")?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("model test returned {status}: {body}"));
+    }
+    response
+        .json::<ModelProfileTestResponse>()
+        .await
+        .context("invalid model test response")
+}
+
 type EventStream = Pin<Box<dyn Stream<Item = Result<QaEvent>> + Send>>;
 
 pub async fn stream_answer(
     config: &CloudConfig,
     image: &[u8],
+    image_mime: &str,
     question: Option<String>,
     session_id: Option<String>,
 ) -> Result<EventStream> {
@@ -184,8 +331,9 @@ pub async fn stream_answer(
         device_id: config.device_id.clone(),
         session_id,
         question,
+        model_profile: (!config.model_profile.is_empty()).then(|| config.model_profile.clone()),
         image_b64: base64::engine::general_purpose::STANDARD.encode(image),
-        mime_type: "image/png".to_string(),
+        mime_type: image_mime.to_string(),
     };
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))

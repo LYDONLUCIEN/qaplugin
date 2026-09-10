@@ -177,6 +177,7 @@ start_app() {
     [[ -n "${QA_WEB_URL:-}" ]] && open_args+=(--env "QA_WEB_URL=${QA_WEB_URL}")
     [[ -n "${QA_DEVICE_ID:-}" ]] && open_args+=(--env "QA_DEVICE_ID=${QA_DEVICE_ID}")
     [[ -n "${QA_DEVICE_TOKEN:-}" ]] && open_args+=(--env "QA_DEVICE_TOKEN=${QA_DEVICE_TOKEN}")
+    [[ -n "${QA_MODEL_PROFILE:-}" ]] && open_args+=(--env "QA_MODEL_PROFILE=${QA_MODEL_PROFILE}")
     open "${open_args[@]}" "$bundle"
     waited=0
     pid=""
