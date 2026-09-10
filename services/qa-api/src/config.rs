@@ -20,7 +20,7 @@ pub struct CloudConfig {
 impl CloudConfig {
     pub fn from_env() -> Result<Self> {
         let bind_addr: SocketAddr = std::env::var("QA_BIND_ADDR")
-            .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
+            .unwrap_or_else(|_| "0.0.0.0:6060".to_string())
             .parse()
             .context("invalid QA_BIND_ADDR")?;
         let web_dir = std::env::var("QA_WEB_DIR")

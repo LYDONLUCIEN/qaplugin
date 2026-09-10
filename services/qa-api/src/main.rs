@@ -16,6 +16,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use qa_protocol::{AnswerRequest, DeviceCommand, QaEvent, WebClientMessage};
 use serde::{Deserialize, Serialize};
@@ -157,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
             put(admin_assign_device),
         )
         .route("/v1/answers/stream", post(answer_stream))
+        .route("/v1/turns/:turn_id/screenshot", get(turn_screenshot))
         .route("/v1/devices/connect", get(device_ws))
         .route("/v1/web/ws", get(web_ws))
         .fallback_service(static_files)
@@ -176,6 +178,52 @@ async fn main() -> anyhow::Result<()> {
 
 async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}))
+}
+
+async fn turn_screenshot(
+    State(state): State<AppState>,
+    Path(turn_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return *response,
+    };
+    let screenshot = match state.store.turn_screenshot(&turn_id) {
+        Ok(Some(screenshot)) => screenshot,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "截图不存在"),
+        Err(error) => {
+            log::error!("failed to load turn screenshot: {error:#}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "无法读取截图");
+        }
+    };
+    match state.store.can_access_device(&user, &screenshot.device_id) {
+        Ok(true) => {}
+        Ok(false) => return json_error(StatusCode::FORBIDDEN, "无权访问这张截图"),
+        Err(error) => {
+            log::error!("failed to authorize screenshot: {error:#}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "无法验证截图权限");
+        }
+    }
+    let bytes = match STANDARD.decode(&screenshot.screenshot_b64) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log::error!("stored screenshot is invalid Base64: {error}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "截图数据损坏");
+        }
+    };
+    let content_type = match screenshot.screenshot_mime.as_str() {
+        "image/jpeg" => "image/jpeg",
+        _ => "image/png",
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "private, no-store"),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -593,7 +641,7 @@ async fn answer_stream(
                 return;
             }
         };
-        let mut llm_stream = match ai::stream_vision(&cfg, &prompt, &image_b64, &image_mime).await {
+        let mut llm_stream = match ai::stream_answer(&cfg, &prompt, &image_b64, &image_mime).await {
             Ok(stream) => stream,
             Err(error) => {
                 let message = format!("LLM call failed: {error}");
@@ -1038,10 +1086,14 @@ fn session_detail_event(
     let session = store
         .session(device_id, session_id)?
         .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
-    Ok(QaEvent::SessionDetail {
-        session,
-        turns: store.turns(session_id)?,
-    })
+    let mut turns = store.turns(session_id)?;
+    // History screenshots are fetched lazily through an authenticated HTTP
+    // endpoint. Keeping Base64 blobs out of the WebSocket prevents a mobile
+    // client from receiving one multi-megabyte frame for every session load.
+    for turn in &mut turns {
+        turn.screenshot_b64.clear();
+    }
+    Ok(QaEvent::SessionDetail { session, turns })
 }
 
 async fn queue_session_state(
@@ -1075,4 +1127,50 @@ fn authorized_device(config: &CloudConfig, headers: &HeaderMap, device_id: &str)
         return false;
     };
     value.strip_prefix("Bearer ") == Some(expected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_detail_event;
+    use crate::store::Store;
+    use qa_protocol::QaEvent;
+
+    #[test]
+    fn websocket_session_history_omits_inline_screenshot_data() {
+        let path =
+            std::env::temp_dir().join(format!("qa-session-event-test-{}.db", uuid::Uuid::new_v4()));
+        let store = Store::open(&path).expect("open store");
+        let session = store
+            .create_session("desktop-1", Some("移动端"), Some("分析页面"))
+            .expect("create session");
+        store
+            .create_turn(
+                &session.id,
+                "分析页面",
+                "large-base64-placeholder",
+                "image/png",
+            )
+            .expect("create turn");
+
+        let event =
+            session_detail_event(&store, "desktop-1", &session.id).expect("build session detail");
+        let QaEvent::SessionDetail { turns, .. } = event else {
+            panic!("expected session detail");
+        };
+        assert_eq!(turns.len(), 1);
+        assert!(turns[0].screenshot_b64.is_empty());
+        assert_eq!(
+            store
+                .turn_screenshot(&turns[0].id)
+                .expect("load screenshot")
+                .expect("screenshot exists")
+                .screenshot_b64,
+            "large-base64-placeholder"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    }
 }

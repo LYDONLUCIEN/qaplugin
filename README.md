@@ -73,7 +73,7 @@ cp .env.cloud.example .env.cloud
 至少设置：
 
 ```dotenv
-QA_BIND_ADDR=127.0.0.1:8080
+QA_BIND_ADDR=127.0.0.1:6060
 QA_ADMIN_USERNAME=admin
 QA_ADMIN_PASSWORD=your-long-admin-password
 QA_COOKIE_SECURE=false
@@ -85,17 +85,17 @@ LLM_API_KEY=your-provider-key
 启动本地云服务：
 
 ```bash
-./start-cloud.sh
+./start-cloud.sh dev
 ```
 
-服务默认监听 `http://127.0.0.1:8080`，网页也由该服务提供。
+服务默认监听 `http://127.0.0.1:6060`，网页也由该服务提供。
 
 ### 3. 配置桌面进程
 
 直接启动桌面端：
 
 ```bash
-./start.sh
+./start.sh dev
 ```
 
 在 Control 窗口填写云端 API 地址、网页地址、设备 ID 和设备 Token，点击“保存并重新连接”。配置会保存在当前用户的应用配置目录中，后续启动会自动加载。
@@ -109,8 +109,8 @@ cp .env.desktop.example .env.desktop
 确保设备 ID 和 Token 与云端匹配：
 
 ```dotenv
-QA_CLOUD_URL=http://127.0.0.1:8080
-QA_WEB_URL=http://127.0.0.1:8080
+QA_CLOUD_URL=http://127.0.0.1:6060
+QA_WEB_URL=http://127.0.0.1:6060
 QA_DEVICE_ID=desktop-1
 QA_DEVICE_TOKEN=your-device-token
 ```
@@ -126,6 +126,24 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
 
 也可以填写百炼控制台提供的工作空间专属 `/compatible-mode/v1` 地址。桌面截图会在云端调用模型前转换为 Base64 Data URL；超过限制的大截图会自动缩放并压缩为 JPEG。
 
+如果截图任务主要依赖文字，也可以启用“OCR → 文本大模型”两段式管线。Qwen-OCR 只负责从截图提取文字，第二阶段可使用 DeepSeek 等纯文本模型，并继续流式输出：
+
+```dotenv
+QA_ANALYSIS_MODE=ocr
+OCR_API_KEY=<百炼 API Key>
+OCR_MODEL=qwen-vl-ocr
+OCR_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
+OCR_MAX_TOKENS=4096
+
+LLM_PROVIDER=deepseek
+LLM_API_KEY=<DeepSeek API Key>
+LLM_MODEL=deepseek-chat
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MAX_TOKENS=1024
+```
+
+默认 `QA_ANALYSIS_MODE=vision`。OCR 模式适合代码、网页、表格和文字题；如果任务依赖图片、图表、颜色、空间位置或纯视觉内容，应继续使用视觉模式。历史截图由网页按需通过鉴权接口加载，不再把一个会话的全部 Base64 图片塞进单条 WebSocket 消息，更适合手机网络。
+
 `start-cloud.sh` 在存在 `.env.cloud` 时只读取该文件，不会混入旧 `.env` 的 DeepSeek/OpenAI 地址；切换模型供应商时请把完整的 `LLM_*` 配置放在 `.env.cloud`。
 
 ### 4. 测试
@@ -133,7 +151,7 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
 浏览器打开：
 
 ```text
-http://127.0.0.1:8080/?device_id=desktop-1
+http://127.0.0.1:6060/?device_id=desktop-1
 ```
 
 使用 `QA_ADMIN_USERNAME` 和首次配置的 `QA_ADMIN_PASSWORD` 登录。设备在线后可从网页触发电脑截图，也可以使用：
@@ -181,10 +199,22 @@ npm run tauri:build -- --bundles nsis
 
 ```bash
 cp .env.cloud.example .env.cloud
-docker compose --env-file .env.cloud -f deploy/docker-compose.yml up -d --build
+./start-cloud.sh deploy
 ```
 
-公网部署必须配置域名和 HTTPS。
+`start-cloud.sh` 会检查 `QA_DOMAIN`：有效域名启用 Caddy/HTTPS；留空或填写 IP 时直接通过 `QA_PUBLIC_PORT`（默认 6060）提供 HTTP。公网长期部署仍应配置域名和 HTTPS。
+
+常用管理命令：
+
+```bash
+./start-cloud.sh start
+./start-cloud.sh stop
+./start-cloud.sh restart
+./start-cloud.sh status
+./start-cloud.sh logs
+```
+
+桌面客户端也支持相同的进程管理方式。`./start.sh deploy` 会在 macOS 构建 `.app` 和 `.dmg`，在 Windows 构建 NSIS 安装包；之后可用 `./start.sh start|stop|restart|status|logs` 管理当前仓库中的打包应用。
 
 ## 当前限制
 

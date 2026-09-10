@@ -37,6 +37,7 @@ openssl rand -hex 32
 
 ```dotenv
 QA_DOMAIN=qa.example.com
+QA_PUBLIC_PORT=6060
 QA_ADMIN_USERNAME=admin
 QA_ADMIN_PASSWORD=<第一个随机值，至少 12 个字符>
 QA_AUTH_SESSION_HOURS=168
@@ -60,6 +61,24 @@ LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
 
 也可以使用百炼控制台给出的工作空间专属 `/compatible-mode/v1` 地址。服务兼容带或不带 `/v1` 的 Base URL，并会把过大的 PNG 截图自动压缩后以 Base64 Data URL 发送。
 
+如果内容以文字为主，可以改成 Qwen-OCR 提取文字，再交给 DeepSeek 等文本模型回答：
+
+```dotenv
+QA_ANALYSIS_MODE=ocr
+OCR_API_KEY=<百炼 API Key>
+OCR_MODEL=qwen-vl-ocr
+OCR_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode
+OCR_MAX_TOKENS=4096
+
+LLM_PROVIDER=deepseek
+LLM_API_KEY=<DeepSeek API Key>
+LLM_MODEL=deepseek-chat
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MAX_TOKENS=1024
+```
+
+默认 `QA_ANALYSIS_MODE=vision`。OCR 模式会先等待文字识别完成，然后第二阶段继续以 SSE 流式输出回答；它不适合依赖图形、颜色和空间关系的任务。
+
 模型供应商相关的 `LLM_*` 变量应完整写在 `.env.cloud`；存在该文件时，`start-cloud.sh` 不再混入旧 `.env` 配置。
 
 多台电脑使用逗号分隔：
@@ -72,13 +91,25 @@ QA_DEVICE_TOKENS=alice-mac=<token1>,bob-win=<token2>,office-pc=<token3>
 
 ## 3. 启动云服务
 
+脚本会根据 `QA_DOMAIN` 自动选择部署方式：真实域名启用 Caddy 和 HTTPS；`QA_DOMAIN` 留空或填写服务器 IP 时，只启动 `qa-api` 并把 `QA_PUBLIC_PORT`（默认 6060）映射到公网，同时强制 `QA_COOKIE_SECURE=false`。后一种方式适合临时测试，截图和登录 Cookie 均为明文传输。
+
 ```bash
-docker compose --env-file .env.cloud -f deploy/docker-compose.yml up -d --build
-docker compose --env-file .env.cloud -f deploy/docker-compose.yml ps
-docker compose --env-file .env.cloud -f deploy/docker-compose.yml logs -f qa-api
+./start-cloud.sh deploy
+./start-cloud.sh status
+./start-cloud.sh logs
 ```
 
-Caddy 会自动申请和续期 HTTPS 证书。验证：
+日常启动、停止和重新加载环境变量：
+
+```bash
+./start-cloud.sh start
+./start-cloud.sh stop
+./start-cloud.sh restart
+```
+
+`restart` 会重新创建容器，因此能读取修改后的 `.env.cloud`；`stop` 不删除容器或数据库卷。首次从旧的非 Docker 进程迁移到 Docker 时，原来的 `data/qa-snapshot.db` 不会自动进入 Docker Volume，请先单独迁移数据库，以免看起来像历史记录消失。
+
+域名模式下 Caddy 会自动申请和续期 HTTPS 证书。验证：
 
 ```bash
 curl https://qa.example.com/healthz
@@ -125,7 +156,7 @@ QA_DEVICE_TOKEN=<与 QA_DEVICE_TOKENS 中 desktop-1 对应的 Token>
 源码开发运行：
 
 ```bash
-./start.sh
+./start.sh dev
 ```
 
 桌面端连接成功后，云端网页会显示设备在线。手机点击触发后，命令流程为：
@@ -142,26 +173,26 @@ QA_DEVICE_TOKEN=<与 QA_DEVICE_TOKENS 中 desktop-1 对应的 Token>
 
 ```bash
 cp .env.cloud.example .env.cloud
-# 使用 QA_BIND_ADDR=127.0.0.1:8080，并设置 QA_COOKIE_SECURE=false
+# 使用 QA_BIND_ADDR=127.0.0.1:6060，并设置 QA_COOKIE_SECURE=false
 npm --prefix apps/cloud-web install
-./start-cloud.sh
+./start-cloud.sh dev
 ```
 
 另开终端运行桌面端：
 
 ```bash
 cp .env.desktop.example .env.desktop
-./start.sh
+./start.sh dev
 ```
 
-本机浏览器访问 `http://127.0.0.1:8080/?device_id=desktop-1`。
+本机浏览器访问 `http://127.0.0.1:6060/?device_id=desktop-1`。
 
-如果要让同一 Wi-Fi 的手机参与本地联调，把桌面配置中的 URL 改为电脑局域网 IP，例如 `http://192.168.1.10:8080`，并让云服务监听 `0.0.0.0:8080`。
+如果要让同一 Wi-Fi 的手机参与本地联调，把桌面配置中的 URL 改为电脑局域网 IP，例如 `http://192.168.1.10:6060`，并让云服务监听 `0.0.0.0:6060`。
 
 ## 6. 更新服务
 
 ```bash
-docker compose --env-file .env.cloud -f deploy/docker-compose.yml up -d --build
+./start-cloud.sh deploy
 docker image prune
 ```
 
@@ -171,7 +202,7 @@ docker image prune
 
 - 不要把 `.env.cloud`、`.env.desktop` 或任何 Token 提交到仓库。
 - 管理员初始登录完成并修改密码后，从 `.env.cloud` 移除 `QA_ADMIN_PASSWORD`；数据库中只保留 Argon2id 密码哈希。
-- 公网部署保持 `QA_COOKIE_SECURE=true`，登录 Cookie 使用 `HttpOnly` 和 `SameSite=Strict`。
+- 域名 HTTPS 部署会强制 `QA_COOKIE_SECURE=true`；无域名 HTTP 模式会强制为 `false`，仅建议临时使用。登录 Cookie 同时使用 `HttpOnly` 和 `SameSite=Strict`。
 - 不要把 LLM Key 放进桌面安装包。
 - 每台设备使用独立 Token；设备丢失时只撤销对应 Token。
 - 桌面端当前会把设备 Token 明文保存在当前用户的应用配置目录；正式分发前建议接入 macOS Keychain / Windows Credential Manager。

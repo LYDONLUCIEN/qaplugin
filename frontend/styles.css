@@ -86,6 +86,11 @@ body.overlay #bar button.active {
   border-color: rgba(76, 194, 255, 0.45);
   background: rgba(76, 194, 255, 0.08);
 }
+body.overlay #bar #jump-latest {
+  color: #dcecff;
+  border-color: rgba(76, 194, 255, 0.45);
+  background: rgba(76, 194, 255, 0.12);
+}
 body.overlay #bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 body.overlay #bar .dot.busy { background: var(--warn); animation: pulse 1s infinite; }
 body.overlay #bar .dot.err { background: var(--err); }

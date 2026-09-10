@@ -21,8 +21,8 @@ RUN apt-get update \
 COPY --from=rust-builder /build/target/release/qa-api /usr/local/bin/qa-api
 COPY --from=web-builder /build/apps/cloud-web/dist /app/web
 
-ENV QA_BIND_ADDR=0.0.0.0:8080
+ENV QA_BIND_ADDR=0.0.0.0:6060
 ENV QA_WEB_DIR=/app/web
-EXPOSE 8080
+EXPOSE 6060
 USER qa
 ENTRYPOINT ["/usr/local/bin/qa-api"]

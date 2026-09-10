@@ -1,0 +1,6 @@
+# Applied automatically by start-cloud.sh when QA_DOMAIN is empty or an IP.
+# It exposes qa-api directly over HTTP for deployments that do not have DNS.
+services:
+  qa-api:
+    ports:
+      - "${QA_PUBLIC_PORT:-6060}:6060"

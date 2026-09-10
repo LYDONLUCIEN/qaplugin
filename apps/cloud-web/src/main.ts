@@ -130,6 +130,7 @@ let deviceOnline = false;
 let retryTimer: number | undefined;
 let sessions: SessionSummary[] = [];
 let activeSessionId: string | undefined;
+let socketRetryCount = 0;
 
 promptInput.value = DEFAULT_PROMPT;
 usernameInput.value = localStorage.getItem("qa-username") || "admin";
@@ -144,9 +145,22 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(String((body as { error?: string }).error || `请求失败 (${response.status})`));
+    throw new ApiError(
+      String((body as { error?: string }).error || `请求失败 (${response.status})`),
+      response.status,
+    );
   }
   return body as T;
+}
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+function isPublicHttp() {
+  return location.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 }
 
 function setConnection(text: string, online: boolean) {
@@ -294,7 +308,9 @@ function renderTurns(turns: TurnRecord[]) {
     const image = document.createElement("img");
     image.loading = "lazy";
     image.alt = "本地电脑历史截图";
-    image.src = `data:${turn.screenshot_mime};base64,${turn.screenshot_b64}`;
+    image.src = turn.screenshot_b64
+      ? `data:${turn.screenshot_mime};base64,${turn.screenshot_b64}`
+      : `${apiBase}/v1/turns/${encodeURIComponent(turn.id)}/screenshot`;
     userBubble.append(userLabel, prompt, image);
     userRow.append(userAvatar, userBubble);
 
@@ -348,6 +364,7 @@ function handleEvent(event: QaEvent) {
         const index = sessions.findIndex((item) => item.id === event.session.id);
         if (index >= 0) sessions[index] = event.session;
         renderSessions();
+        statusEl.textContent = `会话“${event.session.title}”有新截图或回答，点击左侧会话即可查看。`;
       }
       break;
     case "DeviceStatus":
@@ -429,8 +446,10 @@ function connectDevice() {
 
   const nextSocket = new WebSocket(websocketUrl(deviceId));
   socket = nextSocket;
+  const retryDelay = Math.min(10_000, 2_000 + socketRetryCount * 1_000);
   nextSocket.onmessage = (message) => {
     if (socket !== nextSocket) return;
+    socketRetryCount = 0;
     try {
       handleEvent(JSON.parse(String(message.data)) as QaEvent);
     } catch {
@@ -438,17 +457,25 @@ function connectDevice() {
     }
   };
   nextSocket.onerror = () => {
-    if (socket === nextSocket) setConnection("连接错误", false);
+    if (socket === nextSocket) {
+      setConnection("实时连接错误", false);
+      statusEl.textContent = isPublicHttp()
+        ? "实时通道连接失败；IP + HTTP 部署请确认 QA_COOKIE_SECURE=false，并重建或重启 qa-api。"
+        : "实时通道连接失败，正在尝试重新连接…";
+    }
   };
   nextSocket.onclose = () => {
     if (socket !== nextSocket) return;
-    const shouldRetry = Boolean(currentAuth && socketReady);
+    const shouldRetry = Boolean(currentAuth && selectedDeviceId() === deviceId);
     socket = undefined;
     socketReady = false;
     deviceOnline = false;
-    setConnection("已断开", false);
+    setConnection(shouldRetry ? "正在重连…" : "已断开", false);
     updateControls();
-    if (shouldRetry) retryTimer = window.setTimeout(connectDevice, 2000);
+    if (shouldRetry) {
+      socketRetryCount += 1;
+      retryTimer = window.setTimeout(connectDevice, retryDelay);
+    }
   };
 }
 
@@ -492,10 +519,23 @@ async function performLogin() {
   loginButton.disabled = true;
   loginStatusEl.textContent = "正在登录…";
   try {
-    const view = await api<AuthView>("/v1/auth/login", {
+    await api<AuthView>("/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
+    let view: AuthView;
+    try {
+      // Confirm that the browser actually retained the HttpOnly cookie. A
+      // Secure cookie is silently discarded by mobile browsers on public HTTP.
+      view = await api<AuthView>("/v1/auth/me");
+    } catch (error) {
+      if (isPublicHttp() && error instanceof ApiError && error.status === 401) {
+        throw new Error(
+          "登录 Cookie 未生效。IP + HTTP 部署必须设置 QA_COOKIE_SECURE=false，并重新创建 qa-api 容器。",
+        );
+      }
+      throw error;
+    }
     localStorage.setItem("qa-username", view.user.username);
     loginStatusEl.textContent = "";
     enterApp(view);

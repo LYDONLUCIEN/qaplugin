@@ -1,6 +1,6 @@
 {$QA_DOMAIN} {
   encode zstd gzip
-  reverse_proxy qa-api:8080
+  reverse_proxy qa-api:6060
 
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"

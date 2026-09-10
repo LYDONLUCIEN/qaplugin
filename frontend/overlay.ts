@@ -15,6 +15,34 @@ interface HubEvent {
 }
 
 const win = getCurrentWebviewWindow();
+const content = document.getElementById("content")!;
+const jumpLatestButton = document.getElementById("jump-latest") as HTMLButtonElement;
+const BOTTOM_THRESHOLD = 36;
+let followLatest = true;
+
+function isNearBottom() {
+  return content.scrollHeight - content.scrollTop - content.clientHeight <= BOTTOM_THRESHOLD;
+}
+
+function updateFollowControl() {
+  jumpLatestButton.hidden = followLatest;
+}
+
+function resumeFollowing() {
+  followLatest = true;
+  content.scrollTop = content.scrollHeight;
+  updateFollowControl();
+}
+
+content.addEventListener("scroll", () => {
+  followLatest = isNearBottom();
+  updateFollowControl();
+}, { passive: true });
+
+jumpLatestButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  resumeFollowing();
+});
 
 function setState(text: string, cls: "idle" | "busy" | "err") {
   const dot = document.querySelector(".dot") as HTMLElement;
@@ -25,9 +53,11 @@ function setState(text: string, cls: "idle" | "busy" | "err") {
 }
 
 function setContent(html: string) {
-  const content = document.getElementById("content")!;
+  followLatest = true;
   content.classList.remove("markdown-body");
   content.innerHTML = html;
+  content.scrollTop = 0;
+  updateFollowControl();
 }
 
 let lastAnswer = "";
@@ -35,10 +65,18 @@ let lastAnswer = "";
 function renderAnswer(text: string) {
   lastAnswer = text;
   if (recordingDetected) return; // will re-render when capture stops
-  const content = document.getElementById("content")!;
+  const previousScrollTop = content.scrollTop;
+  const shouldFollow = followLatest || isNearBottom();
   content.classList.add("markdown-body");
   renderMarkdown(content, text);
-  content.scrollTop = content.scrollHeight;
+  if (shouldFollow) {
+    content.scrollTop = content.scrollHeight;
+    followLatest = true;
+  } else {
+    content.scrollTop = previousScrollTop;
+    followLatest = false;
+  }
+  updateFollowControl();
 }
 
 function escapeHtml(s: string) {

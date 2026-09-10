@@ -78,7 +78,7 @@
   当前项目使用 Caddy 自动申请 HTTPS 证书，因此正式使用建议配置域名，并确保公网能够访问 80、443 端口。Caddy Automatic HTTPS
   (https://caddyserver.com/docs/automatic-https)
 
-  不要把 8080 端口直接暴露到公网；它只在 Docker 内部由 Caddy 访问。
+  不要把 6060 端口直接暴露到公网；它只在 Docker 内部由 Caddy 访问。
 
   ### 2. 安装 Git 和 Docker
 
@@ -120,8 +120,9 @@
 
   使用 Qwen 时可以填写：
 
-  QA_BIND_ADDR=0.0.0.0:8080
+  QA_BIND_ADDR=0.0.0.0:6060
   QA_DOMAIN=qa.example.com
+  QA_PUBLIC_PORT=6060
 
   QA_ADMIN_USERNAME=admin
   QA_ADMIN_PASSWORD=<第一个随机密码>
@@ -151,21 +152,17 @@
 
   ### 5. 启动云服务
 
-  docker compose --env-file .env.cloud \
-    -f deploy/docker-compose.yml \
-    up -d --build
+  ./start-cloud.sh deploy
 
   查看状态：
 
-  docker compose --env-file .env.cloud \
-    -f deploy/docker-compose.yml \
-    ps
+  ./start-cloud.sh status
 
   查看日志：
 
-  docker compose --env-file .env.cloud \
-    -f deploy/docker-compose.yml \
-    logs -f qa-api
+  ./start-cloud.sh logs
+
+  脚本会根据 `QA_DOMAIN` 自动选择模式：真实域名启用 Caddy/HTTPS；留空或填写公网 IP 时通过 `QA_PUBLIC_PORT` 直接提供 HTTP，并自动使用非 Secure Cookie。无域名模式适合临时测试，长期公网使用仍建议配置域名和 HTTPS。
 
   验证：
 
@@ -285,11 +282,11 @@
 
   然后：
 
-  ./start.sh
+  ./start.sh dev
 
   也可以构建 Mac 安装包：
 
-  npm run tauri:build -- --bundles app,dmg
+  ./start.sh deploy
 
   产物位于：
 

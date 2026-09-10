@@ -41,6 +41,13 @@ pub struct AdminUserSummary {
     pub created_at: i64,
 }
 
+#[derive(Clone, Debug)]
+pub struct TurnScreenshot {
+    pub device_id: String,
+    pub screenshot_b64: String,
+    pub screenshot_mime: String,
+}
+
 #[derive(Clone)]
 pub struct Store {
     connection: Arc<Mutex<Connection>>,
@@ -486,6 +493,26 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    pub fn turn_screenshot(&self, turn_id: &str) -> Result<Option<TurnScreenshot>> {
+        let connection = self.lock()?;
+        Ok(connection
+            .query_row(
+                r#"SELECT s.device_id, t.screenshot_b64, t.screenshot_mime
+                   FROM turns t
+                   JOIN sessions s ON s.id = t.session_id
+                   WHERE t.id = ?1"#,
+                [turn_id],
+                |row| {
+                    Ok(TurnScreenshot {
+                        device_id: row.get(0)?,
+                        screenshot_b64: row.get(1)?,
+                        screenshot_mime: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
     fn turn(&self, turn_id: &str) -> Result<Option<TurnRecord>> {
         let connection = self.lock()?;
         Ok(connection
@@ -586,6 +613,13 @@ mod tests {
         let turns = store.turns(&session.id).expect("list turns");
         assert_eq!(turns[0].answer, "请检查用户名");
         assert_eq!(turns[0].status, "done");
+        let screenshot = store
+            .turn_screenshot(&turn.id)
+            .expect("load screenshot")
+            .expect("screenshot exists");
+        assert_eq!(screenshot.device_id, "desktop-1");
+        assert_eq!(screenshot.screenshot_b64, "cG5n");
+        assert_eq!(screenshot.screenshot_mime, "image/png");
 
         drop(store);
         let _ = std::fs::remove_file(&path);

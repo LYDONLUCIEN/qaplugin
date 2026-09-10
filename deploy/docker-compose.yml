@@ -6,24 +6,26 @@ services:
     env_file:
       - ../.env.cloud
     environment:
-      QA_BIND_ADDR: 0.0.0.0:8080
+      QA_BIND_ADDR: 0.0.0.0:6060
       QA_WEB_DIR: /app/web
       QA_DB_PATH: /app/data/qa-snapshot.db
+      QA_COOKIE_SECURE: ${QA_EFFECTIVE_COOKIE_SECURE:-true}
     expose:
-      - "8080"
+      - "6060"
     volumes:
       - qa_data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:6060/healthz"]
       interval: 15s
       timeout: 5s
       retries: 5
 
   caddy:
     image: caddy:2-alpine
+    profiles: ["domain"]
     environment:
-      QA_DOMAIN: ${QA_DOMAIN}
+      QA_DOMAIN: ${QA_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"
