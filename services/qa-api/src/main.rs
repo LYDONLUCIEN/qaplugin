@@ -228,15 +228,23 @@ async fn model_profile_test(
     if let Some(ocr) = cfg.ocr.as_mut() {
         ocr.max_tokens = ocr.max_tokens.clamp(16, 128);
     }
-    // A valid 1×1 PNG. It checks the vision request shape without transferring
-    // a real desktop screenshot or creating a history record.
-    const TEST_IMAGE_B64: &str =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9J8l8AAAAASUVORK5CYII=";
+    // Some vision providers require both sides to be greater than 10 pixels.
+    // Generate a tiny valid PNG locally so this stays a cheap test without
+    // transferring a real desktop screenshot or creating a history record.
+    let test_image = match model_test_image_b64() {
+        Ok(image) => image,
+        Err(error) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("failed to prepare model test image: {error}"),
+            )
+        }
+    };
     let result = tokio::time::timeout(Duration::from_secs(25), async {
         let mut stream = ai::stream_answer(
             &cfg,
             "这是连通性测试。请只回复 OK。",
-            TEST_IMAGE_B64,
+            &test_image,
             "image/png",
         )
         .await?;
@@ -263,6 +271,22 @@ async fn model_profile_test(
             "model test timed out after 25 seconds",
         ),
     }
+}
+
+fn model_test_image_b64() -> anyhow::Result<String> {
+    use image::ImageEncoder;
+
+    let image = image::RgbaImage::from_pixel(32, 32, image::Rgba([240, 240, 240, 255]));
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(anyhow::Error::from)?;
+    Ok(STANDARD.encode(png))
 }
 
 fn llm_config_for_profile(config: &CloudConfig, profile_id: &str) -> Result<ai::LlmConfig, String> {
