@@ -229,9 +229,9 @@ async fn model_profile_test(
         ocr.max_tokens = ocr.max_tokens.clamp(16, 128);
     }
     // Some vision providers require both sides to be greater than 10 pixels.
-    // Generate a tiny valid PNG locally so this stays a cheap test without
+    // Generate a tiny standard JPEG locally so this stays a cheap test without
     // transferring a real desktop screenshot or creating a history record.
-    let test_image = match model_test_image_b64() {
+    let (test_image, test_image_mime) = match model_test_image() {
         Ok(image) => image,
         Err(error) => {
             return json_error(
@@ -245,7 +245,7 @@ async fn model_profile_test(
             &cfg,
             "这是连通性测试。请只回复 OK。",
             &test_image,
-            "image/png",
+            test_image_mime,
         )
         .await?;
         match stream.next().await {
@@ -273,20 +273,20 @@ async fn model_profile_test(
     }
 }
 
-fn model_test_image_b64() -> anyhow::Result<String> {
-    use image::ImageEncoder;
+fn model_test_image() -> anyhow::Result<(String, &'static str)> {
+    use image::codecs::jpeg::JpegEncoder;
 
-    let image = image::RgbaImage::from_pixel(32, 32, image::Rgba([240, 240, 240, 255]));
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(
+    let image = image::RgbImage::from_pixel(32, 32, image::Rgb([240, 240, 240]));
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, 90)
+        .encode(
             image.as_raw(),
             image.width(),
             image.height(),
-            image::ExtendedColorType::Rgba8,
+            image::ExtendedColorType::Rgb8,
         )
         .map_err(anyhow::Error::from)?;
-    Ok(STANDARD.encode(png))
+    Ok((STANDARD.encode(jpeg), "image/jpeg"))
 }
 
 fn llm_config_for_profile(config: &CloudConfig, profile_id: &str) -> Result<ai::LlmConfig, String> {
@@ -1259,9 +1259,23 @@ fn authorized_device(config: &CloudConfig, headers: &HeaderMap, device_id: &str)
 
 #[cfg(test)]
 mod tests {
-    use super::session_detail_event;
+    use super::{model_test_image, session_detail_event};
     use crate::store::Store;
     use qa_protocol::QaEvent;
+
+    #[test]
+    fn model_test_image_is_a_valid_32px_jpeg() {
+        use base64::Engine as _;
+        use image::GenericImageView;
+
+        let (image_b64, mime) = model_test_image().expect("create model test image");
+        assert_eq!(mime, "image/jpeg");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(image_b64)
+            .expect("decode JPEG");
+        let image = image::load_from_memory(&bytes).expect("decode JPEG image");
+        assert_eq!(image.dimensions(), (32, 32));
+    }
 
     #[test]
     fn websocket_session_history_omits_inline_screenshot_data() {

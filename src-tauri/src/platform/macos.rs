@@ -2,19 +2,20 @@ use anyhow::Result;
 use tauri::{Emitter, WebviewWindow};
 
 pub async fn capture_to_bytes() -> Result<Vec<u8>> {
-    use std::process::Stdio;
     use tokio::io::AsyncReadExt;
 
     let tmp = std::env::temp_dir().join(format!("qa-snap-{}.png", uuid::Uuid::new_v4()));
     let path = tmp.to_string_lossy().to_string();
-    let status = tokio::process::Command::new("/usr/sbin/screencapture")
+    let output = tokio::process::Command::new("/usr/sbin/screencapture")
         .args(["-x", "-C", &path])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .await?;
-    if !status.success() {
-        anyhow::bail!("screencapture exited {status}");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("screencapture exited {}", output.status);
+        }
+        anyhow::bail!("screencapture exited {}: {stderr}", output.status);
     }
 
     let mut file = tokio::fs::File::open(&tmp).await?;
