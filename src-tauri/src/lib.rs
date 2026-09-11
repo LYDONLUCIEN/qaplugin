@@ -19,6 +19,14 @@ pub struct AppState {
     pub app: tauri::AppHandle,
 }
 
+/// The desktop bundle version comes from the root package.json through the
+/// Tauri configuration. Keep the UI and native window titles tied to that
+/// same packaged value rather than copying a version string into the frontend.
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 #[tauri::command]
 async fn trigger_capture(
     question: Option<String>,
@@ -175,9 +183,17 @@ pub fn run() {
                         });
                     }
                 })
-                .build(),
+        .build(),
         )
         .setup(move |app| {
+            let version = app.package_info().version.to_string();
+            if let Some(control) = app.get_webview_window("control") {
+                let _ = control.set_title(&format!("QA Snapshot · v{version}"));
+            }
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                let _ = overlay.set_title(&format!("QA Overlay · v{version}"));
+            }
+
             let state = AppState {
                 app: app.handle().clone(),
             };
@@ -229,6 +245,7 @@ pub fn run() {
             save_cloud_config,
             test_cloud_connection,
             test_model_profile,
+            get_app_version,
             get_status,
         ])
         .run(tauri::generate_context!())

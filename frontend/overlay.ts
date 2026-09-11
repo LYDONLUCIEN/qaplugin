@@ -3,6 +3,7 @@
 // content gets blanked (placeholder shown); when it stops the latest
 // answer re-appears.
 
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { renderMarkdown } from "./markdown";
@@ -135,6 +136,13 @@ function escapeHtml(s: string) {
 let recordingDetected = false;
 
 async function main() {
+  try {
+    const version = await invoke<string>("get_app_version");
+    document.getElementById("app-version")!.textContent = `v${version}`;
+  } catch (error) {
+    console.warn("could not read app version", error);
+  }
+
   let pinned = localStorage.getItem("qa-overlay-pinned") !== "false";
   const pinButton = document.getElementById("pin") as HTMLButtonElement;
   const renderPin = () => {

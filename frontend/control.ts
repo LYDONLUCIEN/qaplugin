@@ -101,6 +101,13 @@ async function main() {
   let unlisten: UnlistenFn | undefined;
 
   try {
+    const version = await invoke<string>("get_app_version");
+    document.getElementById("app-version")!.textContent = `v${version}`;
+  } catch (error) {
+    console.warn("could not read app version", error);
+  }
+
+  try {
     unlisten = await listen<HubEvent>("hub", (e) => {
       const ev = e.payload;
       switch (ev.type) {
