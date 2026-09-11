@@ -2,6 +2,7 @@ use futures_util::StreamExt;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use qa_protocol::QaEvent;
+use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
@@ -22,8 +23,11 @@ pub async fn capture_and_ask(
     app: tauri::AppHandle,
     question: Option<String>,
     session_id: Option<String>,
+    model_profile: Option<String>,
 ) -> Result<String, String> {
-    let _guard = CAPTURE_LOCK.lock().await;
+    let _guard = CAPTURE_LOCK
+        .try_lock()
+        .map_err(|_| fail(&app, "已有截图问答正在处理中，请等待完成后再试".to_string()))?;
     crate::hub::emit(&app, QaEvent::Capturing);
 
     if let Some(window) = app.get_webview_window("overlay") {
@@ -39,18 +43,45 @@ pub async fn capture_and_ask(
 
     let config = crate::cloud::current(&app)
         .ok_or_else(|| fail(&app, "cloud config is not set".to_string()))?;
-    let mut events =
-        crate::cloud::stream_answer(&config, &image.bytes, image.mime_type, question, session_id)
-            .await
-            .map_err(|error| fail(&app, format!("cloud request failed: {error}")))?;
+    let mut events = tokio::time::timeout(
+        Duration::from_secs(120),
+        crate::cloud::stream_answer(
+            &config,
+            &image.bytes,
+            image.mime_type,
+            question,
+            session_id,
+            model_profile.as_deref(),
+        ),
+    )
+    .await
+    .map_err(|_| {
+        fail(
+            &app,
+            "cloud request timed out after 120 seconds".to_string(),
+        )
+    })?
+    .map_err(|error| fail(&app, format!("cloud request failed: {error}")))?;
 
     let mut answer = String::new();
-    while let Some(event) = events.next().await {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(180), events.next())
+            .await
+            .map_err(|_| {
+                fail(
+                    &app,
+                    "cloud answer stream timed out after 180 seconds".to_string(),
+                )
+            })?;
+        let Some(event) = event else {
+            break;
+        };
         let event = event.map_err(|error| fail(&app, format!("cloud stream failed: {error}")))?;
         match &event {
             QaEvent::Streaming { delta } => answer.push_str(delta),
             QaEvent::Done {
                 answer: final_answer,
+                ..
             } => answer = final_answer.clone(),
             QaEvent::Error { message } => {
                 crate::hub::emit(&app, event.clone());

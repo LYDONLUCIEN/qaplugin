@@ -20,8 +20,20 @@ pub struct TurnRecord {
     pub screenshot_mime: String,
     pub answer: String,
     pub status: String,
+    #[serde(default)]
+    pub model_name: String,
+    #[serde(default)]
+    pub ttft_ms: Option<u64>,
+    #[serde(default)]
+    pub total_ms: Option<u64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelProfileSummary {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,6 +50,12 @@ pub enum QaEvent {
     },
     Done {
         answer: String,
+        #[serde(default)]
+        model_name: String,
+        #[serde(default)]
+        ttft_ms: Option<u64>,
+        #[serde(default)]
+        total_ms: Option<u64>,
     },
     Error {
         message: String,
@@ -51,6 +69,16 @@ pub enum QaEvent {
         screenshot_mime: Option<String>,
         answer: String,
         status: String,
+        #[serde(default)]
+        model_name: String,
+        #[serde(default)]
+        ttft_ms: Option<u64>,
+        #[serde(default)]
+        total_ms: Option<u64>,
+    },
+    ModelProfiles {
+        profiles: Vec<ModelProfileSummary>,
+        default_model_profile: String,
     },
     SessionList {
         sessions: Vec<SessionSummary>,
@@ -83,6 +111,8 @@ pub enum DeviceCommand {
         question: Option<String>,
         #[serde(default)]
         session_id: Option<String>,
+        #[serde(default)]
+        model_profile: Option<String>,
     },
     Ping,
 }
@@ -94,6 +124,8 @@ pub enum WebClientMessage {
         question: Option<String>,
         #[serde(default)]
         session_id: Option<String>,
+        #[serde(default)]
+        model_profile: Option<String>,
     },
     CreateSession {
         title: Option<String>,

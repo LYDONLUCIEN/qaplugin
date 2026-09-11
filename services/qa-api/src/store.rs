@@ -111,6 +111,9 @@ impl Store {
                 screenshot_mime TEXT NOT NULL,
                 answer          TEXT NOT NULL DEFAULT '',
                 status          TEXT NOT NULL,
+                model_name      TEXT NOT NULL DEFAULT '',
+                ttft_ms         INTEGER,
+                total_ms        INTEGER,
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL
             );
@@ -118,6 +121,9 @@ impl Store {
                 ON turns(session_id, created_at DESC);
             "#,
         )?;
+        ensure_turn_column(&connection, "model_name", "TEXT NOT NULL DEFAULT ''")?;
+        ensure_turn_column(&connection, "ttft_ms", "INTEGER")?;
+        ensure_turn_column(&connection, "total_ms", "INTEGER")?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -464,6 +470,18 @@ impl Store {
     }
 
     pub fn finish_turn(&self, turn_id: &str, answer: &str, status: &str) -> Result<()> {
+        self.finish_turn_with_metrics(turn_id, answer, status, "", None, None)
+    }
+
+    pub fn finish_turn_with_metrics(
+        &self,
+        turn_id: &str,
+        answer: &str,
+        status: &str,
+        model_name: &str,
+        ttft_ms: Option<u64>,
+        total_ms: Option<u64>,
+    ) -> Result<()> {
         let connection = self.lock()?;
         let session_id: String = connection.query_row(
             "SELECT session_id FROM turns WHERE id = ?1",
@@ -472,8 +490,8 @@ impl Store {
         )?;
         let timestamp = now();
         connection.execute(
-            "UPDATE turns SET answer = ?1, status = ?2, updated_at = ?3 WHERE id = ?4",
-            params![answer, status, timestamp, turn_id],
+            "UPDATE turns SET answer = ?1, status = ?2, model_name = ?3, ttft_ms = ?4, total_ms = ?5, updated_at = ?6 WHERE id = ?7",
+            params![answer, status, model_name, ttft_ms, total_ms, timestamp, turn_id],
         )?;
         connection.execute(
             "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
@@ -486,7 +504,7 @@ impl Store {
         let connection = self.lock()?;
         let mut statement = connection.prepare(
             r#"SELECT id, session_id, prompt, screenshot_b64, screenshot_mime,
-                      answer, status, created_at, updated_at
+                      answer, status, model_name, ttft_ms, total_ms, created_at, updated_at
                FROM turns WHERE session_id = ?1 ORDER BY created_at DESC"#,
         )?;
         let rows = statement.query_map([session_id], map_turn)?;
@@ -518,7 +536,7 @@ impl Store {
         Ok(connection
             .query_row(
                 r#"SELECT id, session_id, prompt, screenshot_b64, screenshot_mime,
-                          answer, status, created_at, updated_at
+                          answer, status, model_name, ttft_ms, total_ms, created_at, updated_at
                    FROM turns WHERE id = ?1"#,
                 [turn_id],
                 map_turn,
@@ -554,9 +572,25 @@ fn map_turn(row: &Row<'_>) -> rusqlite::Result<TurnRecord> {
         screenshot_mime: row.get(4)?,
         answer: row.get(5)?,
         status: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        model_name: row.get(7)?,
+        ttft_ms: row.get(8)?,
+        total_ms: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
+}
+
+fn ensure_turn_column(connection: &Connection, name: &str, declaration: &str) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(turns)")?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if !names.iter().any(|column| column == name) {
+        connection.execute_batch(&format!(
+            "ALTER TABLE turns ADD COLUMN {name} {declaration}"
+        ))?;
+    }
+    Ok(())
 }
 
 fn map_auth_user(row: &Row<'_>) -> rusqlite::Result<AuthUser> {

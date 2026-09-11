@@ -12,11 +12,16 @@ interface HubEvent {
   delta?: string;
   answer?: string;
   message?: string;
+  model_name?: string;
+  ttft_ms?: number | null;
+  total_ms?: number | null;
 }
 
 const win = getCurrentWebviewWindow();
 const content = document.getElementById("content")!;
+const answerMeta = document.getElementById("answer-meta") as HTMLElement;
 const jumpLatestButton = document.getElementById("jump-latest") as HTMLButtonElement;
+const historyButton = document.getElementById("show-history") as HTMLButtonElement;
 const BOTTOM_THRESHOLD = 36;
 let followLatest = true;
 
@@ -44,6 +49,14 @@ jumpLatestButton.addEventListener("click", (event) => {
   resumeFollowing();
 });
 
+historyButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  showingHistory = !showingHistory;
+  historyButton.textContent = showingHistory ? "当前回答" : "本次历史";
+  if (showingHistory) renderHistory();
+  else renderAnswer(lastAnswer);
+});
+
 function setState(text: string, cls: "idle" | "busy" | "err") {
   const dot = document.querySelector(".dot") as HTMLElement;
   dot.classList.remove("busy", "err");
@@ -61,10 +74,43 @@ function setContent(html: string) {
 }
 
 let lastAnswer = "";
+let showingHistory = false;
+const history: Array<{ answer: string; modelName: string; ttftMs: number | null; totalMs: number | null }> = [];
+
+function timingLabel(modelName: string, ttftMs: number | null, totalMs: number | null) {
+  const parts = [modelName].filter(Boolean);
+  if (ttftMs != null) parts.push(`TTFT ${(ttftMs / 1000).toFixed(2)}s`);
+  if (totalMs != null) parts.push(`完成 ${(totalMs / 1000).toFixed(2)}s`);
+  return parts.join(" · ");
+}
+
+function renderHistory() {
+  followLatest = false;
+  content.replaceChildren();
+  content.classList.remove("markdown-body");
+  if (!history.length) {
+    content.innerHTML = '<p class="placeholder">本次运行还没有完成的回答。</p>';
+    return;
+  }
+  for (const item of [...history].reverse()) {
+    const entry = document.createElement("section");
+    entry.className = "overlay-history-entry";
+    const meta = document.createElement("div");
+    meta.className = "overlay-history-meta";
+    meta.textContent = timingLabel(item.modelName, item.ttftMs, item.totalMs) || "AI 回复";
+    const answer = document.createElement("div");
+    answer.className = "markdown-body";
+    renderMarkdown(answer, item.answer);
+    entry.append(meta, answer);
+    content.append(entry);
+  }
+  content.scrollTop = 0;
+  updateFollowControl();
+}
 
 function renderAnswer(text: string) {
   lastAnswer = text;
-  if (recordingDetected) return; // will re-render when capture stops
+  if (recordingDetected || showingHistory) return; // will re-render when capture stops
   const previousScrollTop = content.scrollTop;
   const shouldFollow = followLatest || isNearBottom();
   content.classList.add("markdown-body");
@@ -104,7 +150,10 @@ async function main() {
     const ev = e.payload as HubEvent;
     switch (ev.type) {
       case "Capturing":
+        showingHistory = false;
+        historyButton.textContent = "本次历史";
         lastAnswer = "";
+        answerMeta.hidden = true;
         setState("capturing", "busy");
         setContent(`<p class="placeholder">截屏中…</p>`);
         break;
@@ -119,8 +168,16 @@ async function main() {
         renderAnswer(lastAnswer);
         break;
       case "Done":
+        lastAnswer = ev.answer ?? lastAnswer;
+        const modelName = ev.model_name ?? "";
+        const ttftMs = ev.ttft_ms ?? null;
+        const totalMs = ev.total_ms ?? null;
+        history.push({ answer: lastAnswer, modelName, ttftMs, totalMs });
+        const metrics = timingLabel(modelName, ttftMs, totalMs);
         setState("done", "idle");
-        renderAnswer(ev.answer ?? lastAnswer);
+        answerMeta.textContent = metrics;
+        answerMeta.hidden = !metrics;
+        renderAnswer(lastAnswer);
         break;
       case "Error":
         setState("err: " + (ev.message ?? ""), "err");

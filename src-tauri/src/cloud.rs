@@ -10,7 +10,7 @@ use qa_protocol::{AnswerRequest, DeviceCommand, QaEvent};
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -326,12 +326,16 @@ pub async fn stream_answer(
     image_mime: &str,
     question: Option<String>,
     session_id: Option<String>,
+    model_profile: Option<&str>,
 ) -> Result<EventStream> {
     let request = AnswerRequest {
         device_id: config.device_id.clone(),
         session_id,
         question,
-        model_profile: (!config.model_profile.is_empty()).then(|| config.model_profile.clone()),
+        model_profile: model_profile
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| (!config.model_profile.is_empty()).then(|| config.model_profile.clone())),
         image_b64: base64::engine::general_purpose::STANDARD.encode(image),
         mime_type: image_mime.to_string(),
     };
@@ -457,10 +461,16 @@ async fn run_command_connection(app: AppHandle, config: &CloudConfig) -> Result<
     log::info!("connected to cloud as device '{}'", config.device_id);
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(25));
+    let (capture_reports_tx, mut capture_reports_rx) = mpsc::channel::<QaEvent>(16);
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
                 socket.send(Message::Ping(Vec::new())).await?;
+            }
+            report = capture_reports_rx.recv() => {
+                if let Some(report) = report {
+                    socket.send(Message::Text(serde_json::to_string(&report)?)).await?;
+                }
             }
             incoming = socket.next() => {
                 let Some(message) = incoming else {
@@ -469,11 +479,14 @@ async fn run_command_connection(app: AppHandle, config: &CloudConfig) -> Result<
                 match message? {
                     Message::Text(text) => {
                         match serde_json::from_str::<DeviceCommand>(&text) {
-                            Ok(DeviceCommand::Trigger { question, session_id }) => {
-                                if let Err(message) = crate::screenshot::capture_and_ask(app.clone(), question, session_id).await {
-                                    let report = QaEvent::Error { message };
-                                    socket.send(Message::Text(serde_json::to_string(&report)?)).await?;
-                                }
+                            Ok(DeviceCommand::Trigger { question, session_id, model_profile }) => {
+                                let app = app.clone();
+                                let reports = capture_reports_tx.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(message) = crate::screenshot::capture_and_ask(app, question, session_id, model_profile).await {
+                                        let _ = reports.send(QaEvent::Error { message }).await;
+                                    }
+                                });
                             }
                             Ok(DeviceCommand::Ping) => {
                                 socket.send(Message::Pong(Vec::new())).await?;

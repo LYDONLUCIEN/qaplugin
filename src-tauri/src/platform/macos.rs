@@ -70,7 +70,9 @@ pub fn set_window_protected(window: &WebviewWindow, protected: bool) -> Result<(
         let _: () = msg_send![&*raw, setSharingType: sharing];
         let level: i64 = 25;
         let _: () = msg_send![&*raw, setLevel: level];
-        let behavior: usize = 1usize | (1usize << 3);
+        // CanJoinAllSpaces | FullScreenAuxiliary. The old Transient flag did
+        // not allow this panel to accompany a browser's full-screen Space.
+        let behavior: usize = 1usize | (1usize << 8);
         let _: () = msg_send![&*raw, setCollectionBehavior: behavior];
     }
 

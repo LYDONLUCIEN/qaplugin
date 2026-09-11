@@ -54,6 +54,9 @@ interface TurnRecord {
   screenshot_mime: string;
   answer: string;
   status: string;
+  model_name: string;
+  ttft_ms?: number | null;
+  total_ms?: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -63,7 +66,7 @@ type QaEvent =
   | { type: "Uploading" }
   | { type: "Screenshot"; image_b64: string; mime_type: string }
   | { type: "Streaming"; delta: string }
-  | { type: "Done"; answer: string }
+  | { type: "Done"; answer: string; model_name?: string; ttft_ms?: number | null; total_ms?: number | null }
   | { type: "Error"; message: string }
   | { type: "DeviceStatus"; connected: boolean }
   | {
@@ -73,13 +76,22 @@ type QaEvent =
       screenshot_mime?: string | null;
       answer: string;
       status: string;
+      model_name?: string;
+      ttft_ms?: number | null;
+      total_ms?: number | null;
     }
   | {
       type: "SessionList";
       sessions: SessionSummary[];
       active_session_id?: string | null;
     }
-  | { type: "SessionDetail"; session: SessionSummary; turns: TurnRecord[] };
+  | { type: "SessionDetail"; session: SessionSummary; turns: TurnRecord[] }
+  | { type: "ModelProfiles"; profiles: ModelProfile[]; default_model_profile: string };
+
+interface ModelProfile {
+  id: string;
+  label: string;
+}
 
 const apiBase = (import.meta.env.VITE_QA_API_URL || location.origin).replace(/\/$/, "");
 const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector)!;
@@ -103,6 +115,7 @@ const newUsernameInput = $("#new-username") as HTMLInputElement;
 const newPasswordInput = $("#new-password") as HTMLInputElement;
 const createUserButton = $("#create-user") as HTMLButtonElement;
 const deviceSelect = $("#device-id") as HTMLSelectElement;
+const modelProfileSelect = $("#model-profile") as HTMLSelectElement;
 const connectButton = $("#connect") as HTMLButtonElement;
 const captureButton = $("#capture") as HTMLButtonElement;
 const newSessionButton = $("#new-session") as HTMLButtonElement;
@@ -114,6 +127,7 @@ const deviceStateEl = $("#device-state") as HTMLElement;
 const statusEl = $("#status") as HTMLElement;
 const answerEl = $("#live-answer") as HTMLElement;
 const answerStateEl = $("#answer-state") as HTMLElement;
+const liveAnswerLabelEl = $("#live-answer-label") as HTMLElement;
 const livePromptEl = $("#live-prompt") as HTMLElement;
 const screenshotEl = $("#live-screenshot") as HTMLImageElement;
 const previewEmptyEl = $("#live-preview-empty") as HTMLElement;
@@ -131,6 +145,7 @@ let retryTimer: number | undefined;
 let sessions: SessionSummary[] = [];
 let activeSessionId: string | undefined;
 let socketRetryCount = 0;
+let modelProfiles: ModelProfile[] = [];
 
 promptInput.value = DEFAULT_PROMPT;
 usernameInput.value = localStorage.getItem("qa-username") || "admin";
@@ -178,6 +193,7 @@ function updateControls() {
   const hasDevice = Boolean(selectedDeviceId());
   connectButton.disabled = !currentAuth || !hasDevice;
   captureButton.disabled = !socketReady || !deviceOnline || !hasSession;
+  modelProfileSelect.disabled = !socketReady || !modelProfiles.length;
   newSessionButton.disabled = !socketReady;
   saveSessionButton.disabled = !socketReady || !hasSession;
   titleInput.disabled = !socketReady || !hasSession;
@@ -193,6 +209,29 @@ function updateControls() {
       ? `设备 ${selectedDeviceId()} 在线`
       : `设备 ${selectedDeviceId()} 离线，历史仍可浏览`;
   }
+}
+
+function renderModelProfiles(profiles: ModelProfile[], defaultProfile: string) {
+  const selected = modelProfileSelect.value || localStorage.getItem("qa-model-profile") || defaultProfile;
+  modelProfiles = profiles;
+  modelProfileSelect.replaceChildren();
+  for (const profile of profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.id === defaultProfile ? `${profile.label}（默认）` : profile.label;
+    modelProfileSelect.append(option);
+  }
+  if ([...modelProfileSelect.options].some((option) => option.value === selected)) {
+    modelProfileSelect.value = selected;
+  }
+  updateControls();
+}
+
+function timingLabel(modelName = "", ttft?: number | null, total?: number | null) {
+  const parts = [modelName].filter(Boolean);
+  if (ttft != null) parts.push(`TTFT ${(ttft / 1000).toFixed(2)}s`);
+  if (total != null) parts.push(`完成 ${(total / 1000).toFixed(2)}s`);
+  return parts.join(" · ");
 }
 
 function send(message: object) {
@@ -290,7 +329,10 @@ function renderTurns(turns: TurnRecord[]) {
     const state = document.createElement("span");
     state.className = turn.status.startsWith("error") ? "turn-state error" : "turn-state";
     state.textContent = statusLabel(turn.status);
-    header.append(time, state);
+    const metrics = document.createElement("span");
+    metrics.className = "muted";
+    metrics.textContent = timingLabel(turn.model_name, turn.ttft_ms, turn.total_ms);
+    header.append(time, state, metrics);
 
     const userRow = document.createElement("div");
     userRow.className = "message-row user-message";
@@ -323,7 +365,7 @@ function renderTurns(turns: TurnRecord[]) {
     answerBubble.className = "message-bubble answer-bubble";
     const answerLabel = document.createElement("div");
     answerLabel.className = "message-label";
-    answerLabel.textContent = "AI 回复";
+    answerLabel.textContent = timingLabel(turn.model_name, turn.ttft_ms, turn.total_ms) || "AI 回复";
     const answer = document.createElement("div");
     answer.className = "markdown-body";
     const answerText =
@@ -345,11 +387,15 @@ function handleEvent(event: QaEvent) {
       liveAnswer = event.answer || "";
       renderMarkdown(answerEl, liveAnswer || "尚无实时回答。");
       statusEl.textContent = event.status || "idle";
+      liveAnswerLabelEl.textContent = timingLabel(event.model_name || "", event.ttft_ms, event.total_ms) || "AI 回复";
       if (event.screenshot_b64) {
         showLiveScreenshot(event.screenshot_b64, event.screenshot_mime || "image/png");
       }
       setConnection("设备已连接", true);
       updateControls();
+      break;
+    case "ModelProfiles":
+      renderModelProfiles(event.profiles, event.default_model_profile);
       break;
     case "SessionList":
       sessions = event.sessions;
@@ -381,6 +427,7 @@ function handleEvent(event: QaEvent) {
       answerEl.textContent = "等待截图上传…";
       statusEl.textContent = "桌面端正在截图…";
       answerStateEl.textContent = "截图中";
+      liveAnswerLabelEl.textContent = "AI 回复";
       break;
     case "Screenshot":
       showLiveScreenshot(event.image_b64, event.mime_type);
@@ -401,8 +448,10 @@ function handleEvent(event: QaEvent) {
     case "Done":
       liveAnswer = event.answer || liveAnswer;
       renderMarkdown(answerEl, liveAnswer || "回答为空。");
-      statusEl.textContent = "完成，已写入会话历史";
+      const metrics = timingLabel(event.model_name || "", event.ttft_ms, event.total_ms);
+      statusEl.textContent = `完成，已写入会话历史${metrics ? ` · ${metrics}` : ""}`;
       answerStateEl.textContent = "已完成";
+      liveAnswerLabelEl.textContent = metrics || "AI 回复";
       break;
     case "Error":
       liveCardEl.hidden = false;
@@ -707,8 +756,16 @@ captureButton.addEventListener("click", () => {
     title: titleInput.value.trim() || "新会话",
     prompt,
   });
-  send({ type: "Trigger", session_id: activeSessionId, question: prompt });
+  send({
+    type: "Trigger",
+    session_id: activeSessionId,
+    question: prompt,
+    model_profile: modelProfileSelect.value || null,
+  });
   statusEl.textContent = "触发命令已发送…";
+});
+modelProfileSelect.addEventListener("change", () => {
+  localStorage.setItem("qa-model-profile", modelProfileSelect.value);
 });
 
 function formatTime(timestamp: number) {

@@ -18,7 +18,7 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::{SinkExt, StreamExt};
-use qa_protocol::{AnswerRequest, DeviceCommand, QaEvent, WebClientMessage};
+use qa_protocol::{AnswerRequest, DeviceCommand, ModelProfileSummary, QaEvent, WebClientMessage};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tower_http::services::{ServeDir, ServeFile};
@@ -33,6 +33,9 @@ struct LatestSnapshot {
     screenshot_mime: Option<String>,
     answer: String,
     status: String,
+    model_name: String,
+    ttft_ms: Option<u64>,
+    total_ms: Option<u64>,
 }
 
 struct DeviceRuntime {
@@ -769,6 +772,8 @@ async fn answer_stream(
                 return;
             }
         };
+        let model_name = cfg.model.clone();
+        let model_started = Instant::now();
         let mut llm_stream = match ai::stream_answer(&cfg, &prompt, &image_b64, &image_mime).await {
             Ok(stream) => stream,
             Err(error) => {
@@ -782,9 +787,13 @@ async fn answer_stream(
         };
 
         let mut answer = String::new();
+        let mut ttft_ms = None;
         while let Some(chunk) = llm_stream.next().await {
             match chunk {
                 Ok(delta) => {
+                    if ttft_ms.is_none() {
+                        ttft_ms = Some(model_started.elapsed().as_millis() as u64);
+                    }
                     answer.push_str(&delta);
                     let event = QaEvent::Streaming { delta };
                     let _ = device.events.send(event.clone());
@@ -806,10 +815,33 @@ async fn answer_stream(
             }
         }
 
-        let event = QaEvent::Done { answer };
+        let total_ms = Some(model_started.elapsed().as_millis() as u64);
+        let event = QaEvent::Done {
+            answer,
+            model_name: model_name.clone(),
+            ttft_ms,
+            total_ms,
+        };
         publish(&device, &event).await;
-        if let QaEvent::Done { answer } = &event {
-            finish_history(&store, &device, &device_id, &session_id, &turn_id, answer, "done");
+        if let QaEvent::Done {
+            answer,
+            model_name,
+            ttft_ms,
+            total_ms,
+        } = &event
+        {
+            finish_history_with_metrics(
+                &store,
+                &device,
+                &device_id,
+                &session_id,
+                &turn_id,
+                answer,
+                "done",
+                model_name,
+                *ttft_ms,
+                *total_ms,
+            );
         }
         yield Ok(sse_event(&event));
     };
@@ -827,9 +859,17 @@ async fn publish(device: &DeviceRuntime, event: &QaEvent) {
     {
         let mut latest = device.latest.write().await;
         match event {
-            QaEvent::Done { answer } => {
+            QaEvent::Done {
+                answer,
+                model_name,
+                ttft_ms,
+                total_ms,
+            } => {
                 latest.answer = answer.clone();
                 latest.status = "done".to_string();
+                latest.model_name = model_name.clone();
+                latest.ttft_ms = *ttft_ms;
+                latest.total_ms = *total_ms;
             }
             QaEvent::Error { message } => latest.status = format!("error: {message}"),
             _ => {}
@@ -879,6 +919,27 @@ fn finish_history(
     status: &str,
 ) {
     if let Err(error) = store.finish_turn(turn_id, answer, status) {
+        log::error!("failed to persist turn result: {error:#}");
+    }
+    publish_history(store, device, device_id, session_id);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_history_with_metrics(
+    store: &Store,
+    device: &DeviceRuntime,
+    device_id: &str,
+    session_id: &str,
+    turn_id: &str,
+    answer: &str,
+    status: &str,
+    model_name: &str,
+    ttft_ms: Option<u64>,
+    total_ms: Option<u64>,
+) {
+    if let Err(error) =
+        store.finish_turn_with_metrics(turn_id, answer, status, model_name, ttft_ms, total_ms)
+    {
         log::error!("failed to persist turn result: {error:#}");
     }
     publish_history(store, device, device_id, session_id);
@@ -997,8 +1058,26 @@ async fn handle_web_ws(
         screenshot_mime: snapshot.screenshot_mime,
         answer: snapshot.answer,
         status: snapshot.status,
+        model_name: snapshot.model_name,
+        ttft_ms: snapshot.ttft_ms,
+        total_ms: snapshot.total_ms,
     };
     if send_web_event(&mut socket, &initial).await.is_err() {
+        return;
+    }
+    let profiles = QaEvent::ModelProfiles {
+        profiles: state
+            .config
+            .model_profiles
+            .iter()
+            .map(|profile| ModelProfileSummary {
+                id: profile.id.clone(),
+                label: profile.label.clone(),
+            })
+            .collect(),
+        default_model_profile: state.config.default_model_profile.clone(),
+    };
+    if send_web_event(&mut socket, &profiles).await.is_err() {
         return;
     }
     if let Ok(event) = session_list_event(&state.store, &device_id, Some(&active_session.id)) {
@@ -1057,6 +1136,7 @@ async fn handle_web_ws(
                 WebClientMessage::Trigger {
                     question,
                     session_id,
+                    model_profile,
                 } => {
                     let selected_id = session_id.unwrap_or_else(|| active_session_id.clone());
                     let session = match command_store.session(&command_device_id, &selected_id) {
@@ -1083,11 +1163,27 @@ async fn handle_web_ws(
                         None,
                         Some(&prompt),
                     );
+                    let model_profile = model_profile
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string);
+                    if let Some(profile) = model_profile.as_deref() {
+                        if !state.config.has_model_profile(profile) {
+                            let _ = direct_tx
+                                .send(QaEvent::Error {
+                                    message: format!("未知模型档案：{profile}"),
+                                })
+                                .await;
+                            continue;
+                        }
+                    }
                     if command_device
                         .commands
                         .send(DeviceCommand::Trigger {
                             question: Some(prompt),
                             session_id: Some(session.id),
+                            model_profile,
                         })
                         .is_err()
                     {

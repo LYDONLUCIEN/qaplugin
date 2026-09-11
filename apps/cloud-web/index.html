@@ -47,6 +47,10 @@
             当前设备
             <select id="device-id"></select>
           </label>
+          <label>
+            本次模型
+            <select id="model-profile" disabled></select>
+          </label>
           <button id="connect">连接设备</button>
           <p id="device-state" class="hint">登录后只能访问分配给你的设备；管理员可以访问全部设备。</p>
         </section>
@@ -135,7 +139,7 @@
                 <article class="message-row assistant-message">
                   <div class="message-avatar ai">AI</div>
                   <div class="message-bubble answer-bubble">
-                    <div class="message-label">AI 回复</div>
+                    <div id="live-answer-label" class="message-label">AI 回复</div>
                     <div id="live-answer" class="markdown-body">等待模型回答…</div>
                   </div>
                 </article>

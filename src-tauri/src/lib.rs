@@ -25,7 +25,7 @@ async fn trigger_capture(
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let app = state.app.clone();
-    screenshot::capture_and_ask(app, question, None).await
+    screenshot::capture_and_ask(app, question, None, None).await
 }
 
 #[tauri::command]
@@ -171,7 +171,7 @@ pub fn run() {
                     if event.state == ShortcutState::Pressed {
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
-                            let _ = screenshot::capture_and_ask(app, None, None).await;
+                            let _ = screenshot::capture_and_ask(app, None, None, None).await;
                         });
                     }
                 })
